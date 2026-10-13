@@ -158,7 +158,7 @@
 
   /* ---------- official channels ---------- */
   var OFFICIAL = /(hum tv|hum network|ary digital|ary zindagi|geo entertainment|geo tv|har pal geo|green entertainment|express entertainment|a-?plus|tv one|ptv|7th sky|urdu ?1|zee tv|zee5|zee entertainment|star plus|star bharat|star utsav|jio ?hotstar|disney\+? ?hotstar|hotstar|sony ?(liv|sab|entertainment|tv)|sab tv|colors tv|dangal|shemaroo|alt ?balaji|mx player|ullu|sun neo|(^|\s)(&tv|and ?tv)(\s|$))/i;
-  var CH_KEY = 'pbc_ch', CH_TTL = 7 * DAY;
+  var CH_KEY = 'pb_channels', CH_TTL = 7 * DAY;   // not under the 'pbc' prefix, so a full cache never evicts it
   function channelInfo(ids) {
     var store = lsGet(CH_KEY) || {}, now = Date.now(), need = [], seen = {}, batches = [], i;
     ids.forEach(function (id) { if (id && !seen[id] && !(store[id] && now - store[id].t < CH_TTL)) { seen[id] = 1; need.push(id); } });
@@ -297,8 +297,8 @@
       var fromFront = trending().then(function (secs) {
         secs.forEach(function (s) { s.items.forEach(function (p) { if (sim(q, p.title) >= 0.7) add(p); }); });
       }, function () {});
-      var fromSearch = fromFront.then(function () { return playlistSearch(q + ' full episodes', { max: 15 }); });
-      return settle([fromSearch]).then(function (rs) {
+      var fromSearch = playlistSearch(q + ' full episodes', { max: 15 });   // runs alongside the front-page lookup
+      return settle([fromSearch, fromFront]).then(function (rs) {
         if (rs[0].ok) rs[0].v.forEach(add);
         else if (!order.length) throw rs[0].e;
         var cand = order.map(function (id) { var p = pool[id]; return extend(p, { score: +sim(q, p.title).toFixed(2) }); })

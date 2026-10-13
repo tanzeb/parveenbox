@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f1115">
 <link rel="icon" href="icon.svg">
 <script src="config.js?v=362108be"></script>
-<script src="data.js?v=7eb18c4d"></script>
+<script src="data.js?v=4fad8b91"></script>
 <title>ParveenBox</title>
 <style>
 /* Written to work on older TV browsers too: no aspect-ratio, no flex gap. CSS grid only inside @supports, flex-wrap otherwise */
@@ -21,6 +21,12 @@ header{position:sticky;top:0;z-index:5;background:rgba(15,17,21,.96);padding:12p
 #q{flex:1;min-width:0;width:100%;background:var(--card);border:1px solid var(--ln);border-radius:22px 0 0 22px;padding:10px 18px;outline:none}
 #q:focus{border-color:var(--ac)}
 #go{background:var(--card2);border:1px solid var(--ln);border-left:0;border-radius:0 22px 22px 0;padding:0 18px;cursor:pointer}
+/* the search box stays hidden until the Search button is pressed, so the TV keyboard never pops up by itself */
+.sbox{display:none}.sbox.open{display:flex}
+#sbtn{margin-left:auto;background:var(--card);border:1px solid var(--ln);border-radius:22px;padding:9px 20px;cursor:pointer;max-width:50%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sbtn.hide{display:none}
+.hero{display:flex;align-items:flex-start;margin-bottom:8px}.hero img{width:420px;max-width:40%;border-radius:12px;margin-right:24px;background:#222}
+.hero .btn{font-size:1.1em;padding:12px 22px}
 main{max-width:1500px;margin:0 auto;padding:16px}
 h2.sec{font-size:1.2em;margin:22px 0 10px}h2.sec a:hover{color:var(--ac)}.more{color:var(--mut);font-size:.75em;font-weight:400;margin-left:6px}
 .row{display:flex;overflow-x:auto;padding-bottom:10px}.row .tile{flex:0 0 190px;margin-right:14px}
@@ -63,7 +69,7 @@ h1{font-size:1.3em;margin:14px 0 4px}.sub{color:var(--mut)}.ctl{margin-top:8px}
 .ep{display:flex;padding:9px 12px;cursor:pointer;align-items:center}.ep:hover{background:var(--card2)}.ep.cur{background:#2a1d20}
 .ep img{width:112px;height:63px;object-fit:cover;border-radius:6px;flex:none;background:#222;margin-right:10px}
 .ep .no{color:var(--mut);font-size:.8em}.ep .tt{font-size:.87em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.ep.seen .tt{color:var(--mut)}.ep.seen .no:after{content:" \2713 watched";color:var(--ok)}
+.ep.seen .tt{color:var(--mut)}.ep.seen .no:after{content:" \2713 played";color:var(--ok)}
 .back{background:none;border:0;color:var(--mut);cursor:pointer;margin-bottom:10px;font-size:1em}
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2a2f3a;padding:10px 18px;border-radius:10px;display:none;z-index:20;max-width:90vw}
 @media(min-width:1600px){
@@ -76,11 +82,12 @@ h1{font-size:1.3em;margin:14px 0 4px}.sub{color:var(--mut)}.ctl{margin-top:8px}
 <body>
 <header>
   <a class="logo" href="#/">Parveen<b>Box</b></a>
-  <form class="sbox" id="sf"><input id="q" type="search" placeholder="Search any Hindi or Urdu serial…" autocomplete="off"><button id="go" type="submit" aria-label="Search">&#128269;</button></form>
+  <button id="sbtn" type="button">&#128269; Search</button>
+  <form class="sbox" id="sf"><input id="q" type="search" tabindex="-1" placeholder="Search any Hindi or Urdu serial…" autocomplete="off"><button id="go" type="submit" tabindex="-1" aria-label="Search">&#128269;</button></form>
 </header>
 <main id="app"></main>
 <div id="toast"></div>
 
-<script src="app.js?v=342b25b3"></script>
+<script src="app.js?v=5bc9d63a"></script>
 </body>
 </html>

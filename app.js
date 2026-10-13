@@ -74,89 +74,123 @@
       if (r.results.length) h += '<h2 class="sec">Available here</h2><p class="note">Official channels first, then most viewed. ' + (r.hidden ? r.hidden + ' partial or repeated uploads hidden.' : 'Partial and repeated uploads are hidden.') + '</p><div class="grid">' + r.results.map(tile).join('') + '</div>';
       else h += errBox('Not found on YouTube', 'No full-episode playlist matched “' + q + '”. Try another spelling, or the original-language title.');
       $('#app').innerHTML = h;
+      var t = $('.tile'); if (t && document.activeElement !== $('#q')) try { t.focus(); } catch (x) {}
     }, function (e) { if (my !== rid) return; $('#app').innerHTML = errBox('Search failed', e.message); });
   }
 
-  /* some uploaders block embedding (errors 101/150); on the TV hand the episode to LG's YouTube app instead */
-  var onTV = typeof window.PalmServiceBridge === 'function';
-  function openInYouTube(v) {
-    if (onTV) {
-      try {
-        var b = new PalmServiceBridge();
-        b.onservicecallback = function (m) { if (!/"returnValue":\s*true/.test(m)) toast('Could not open the YouTube app.'); };
-        b.call('luna://com.webos.applicationManager/launch', JSON.stringify({ id: 'youtube.leanback.v4', params: { contentTarget: 'https://www.youtube.com/tv?v=' + v } }));
-        return;
-      } catch (e) {}
-    }
-    window.open('https://www.youtube.com/watch?v=' + v, '_blank');
+  /* ---------- watch ----------
+     On the TV, episodes play in the "YouTube AdFree" app (webosbrew youtube-webos, app id youtube.leanback.v4):
+     no ads, its own quality setting, and the remote works normally in its player. A YouTube player embedded in
+     this page would show ads that ParveenBox can neither remove nor skip. Elsewhere (a computer) the embed is used. */
+  var onTV = typeof window.PalmServiceBridge === 'function', bridge = null;
+  function launchYouTube(v, list, done) {
+    try {
+      bridge = new PalmServiceBridge();          // keep a reference until the answer arrives
+      bridge.onservicecallback = function (m) { done(/"returnValue":\s*true/.test(m)); };
+      bridge.call('luna://com.webos.applicationManager/launch', JSON.stringify({ id: 'youtube.leanback.v4', params: { contentTarget: 'https://www.youtube.com/tv?v=' + v + (list ? '&list=' + list : '') } }));
+    } catch (e) { done(false); }
   }
-
-  /* ---------- watch ---------- */
-  var ytResolve, ytReady = new Promise(function (r) { ytResolve = r; });
-  window.onYouTubeIframeAPIReady = function () { ytResolve(true); };
-  (function () { var s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; s.onerror = function () { ytResolve(false); }; document.head.appendChild(s); setTimeout(function () { ytResolve(false); }, 10000); })();
+  var ytReady = null;
+  function loadYT() {
+    if (ytReady) return ytReady;
+    ytReady = new Promise(function (res) {
+      window.onYouTubeIframeAPIReady = function () { res(true); };
+      var s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; s.onerror = function () { res(false); }; document.head.appendChild(s);
+      setTimeout(function () { res(false); }, 10000);
+    });
+    return ytReady;
+  }
 
   function watch(id, my) {
     var back = '<button class="back" id="backBtn">&larr; Back</button>';
     var bindBack = function () { var b = $('#backBtn'); if (b) b.onclick = function () { if (history.length > 1) history.back(); else location.hash = '#/'; }; };
     $('#app').innerHTML = back + skeleton(1); bindBack();
-    var meta = known[id] || metas[id], eps;
+    var meta = known[id] || metas[id];
     Promise.all([meta || PB.playlist(id), PB.episodes(id)]).then(function (res) {
       if (my !== rid) return;
-      meta = res[0]; eps = res[1];
+      var eps = res[1]; meta = res[0];
       if (!eps.length) { $('#app').innerHTML = back + errBox('No episodes', 'This playlist is empty or private.'); bindBack(); return; }
-      start();
-    }, function (e) { if (my !== rid) return; $('#app').innerHTML = back + errBox('Could not load this series', e.message); bindBack(); });
-
-    function start() {
       metas[id] = extend(meta, { count: eps.length }); prog[id] = prog[id] || { w: [] }; persist();
       var idx = 0, i; for (i = 0; i < eps.length; i++) if (eps[i].v === prog[id].last) { idx = i; break; }
-      $('#app').innerHTML = back + '<div class="watch" id="wrap"><div><div class="player"><div id="yt"></div></div><h1 id="epT"></h1><div class="sub">' + esc(meta.title) + ' · ' + eps.length + ' episodes</div>'
-        + '<div class="ctl"><button class="btn" id="prev">&#9198; Prev</button><button class="btn" id="next">Next &#9197;</button><button class="btn" id="fs">&#9974; Full screen</button><button class="btn" id="th">Theater mode</button><button class="btn" id="onyt">' + (onTV ? 'Play in YouTube app' : 'Open on YouTube &#8599;') + '</button></div>'
-        + '<p class="note" id="qnote">For the sharpest picture use Full screen. YouTube picks the quality for you; use its &#9881; menu to choose 1080p if you want.</p></div>'
-        + '<div class="eps"><h3>Episodes</h3><div id="epList"></div></div></div>';
-      bindBack();
-      var draw = function () { $('#epList').innerHTML = eps.map(function (e, i) { return '<div class="ep ' + (i === idx ? 'cur' : '') + ' ' + (prog[id].w.indexOf(e.v) >= 0 ? 'seen' : '') + '" data-i="' + i + '" tabindex="0"><img loading="lazy" src="' + esc(e.th) + '" alt=""><div><div class="no">' + (e.n != null ? 'Episode ' + e.n : 'Part ' + (i + 1)) + '</div><div class="tt">' + esc(e.t) + '</div></div></div>'; }).join(''); };
-      var best = function () { try { var q = player.getAvailableQualityLevels(); if (q && q.length) player.setPlaybackQuality(q[0]); } catch (e) {} };
-      var play = function (i, auto) {
-        idx = Math.min(Math.max(i, 0), eps.length - 1); var e = eps[idx]; prog[id].last = e.v; prog[id].at = Date.now(); persist();
-        $('#epT').textContent = e.t; draw();
-        if (!auto) { var c = $('.ep.cur'); if (c) c.scrollIntoView(false); }
-        if (player && player.loadVideoById) { player.loadVideoById(e.v); setTimeout(best, 1500); }
-      };
-      $('#epList').onclick = function (ev) { var d = ev.target.closest('.ep'); if (d) play(+d.getAttribute('data-i')); };
-      $('#epList').onkeydown = function (ev) { if (ev.keyCode === 13) { var d = ev.target.closest('.ep'); if (d) play(+d.getAttribute('data-i')); } };
-      $('#prev').onclick = function () { play(idx - 1); }; $('#next').onclick = function () { play(idx + 1); };
-      $('#onyt').onclick = function () { openInYouTube(eps[idx].v); };
-      $('#th').onclick = function () { var w = $('#wrap'); w.classList.toggle('theater'); this.textContent = w.classList.contains('theater') ? 'Normal view' : 'Theater mode'; };
-      $('#fs').onclick = function () { try { var f = player && player.getIframe ? player.getIframe() : null; var r = f && (f.requestFullscreen || f.webkitRequestFullscreen); if (r) r.call(f); else toast('Full screen is not available here. Use the player’s own full-screen button.'); } catch (e) { toast('Use the player’s own full-screen button.'); } };
-      var first = eps[idx]; $('#epT').textContent = first.t; draw();
-      var cur = $('.ep.cur'); if (cur) cur.scrollIntoView(false);
-      try { $('#next').focus(); } catch (e) {}
-      ytReady.then(function (ok) {
-        if (my !== rid) return;
-        if (!ok) { $('.player').innerHTML = '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:#8b93a3">The YouTube player could not load. Check the internet connection.</div>'; return; }
-        player = new YT.Player('yt', { videoId: first.v, playerVars: { rel: 0, playsinline: 1, modestbranding: 1, autoplay: 1 }, events: {
-          onReady: function () { setTimeout(best, 1500); },
-          onStateChange: function (e) {
-            if (e.data === YT.PlayerState.PLAYING) best();
-            if (e.data === YT.PlayerState.ENDED) { if (prog[id].w.indexOf(eps[idx].v) < 0) prog[id].w.push(eps[idx].v); persist(); if (idx < eps.length - 1) play(idx + 1, true); else draw(); }
-          },
-          onError: function (e) {
-            var code = e && e.data;
-            if (code === 101 || code === 150) {
-              toast('The uploader only allows this episode on YouTube itself. Press "' + $('#onyt').textContent.replace(/\s*\u2197$/, '') + '".');
-              try { $('#onyt').focus(); } catch (x) {}
-            } else if (code === 153) toast('YouTube blocked the player here (error 153). Open ParveenBox from its web address, not from a local file.');
-            else toast('This episode cannot be played here (error ' + code + '). Press Next.');
-          } } });
-      });
+      var page = { id: id, my: my, meta: meta, eps: eps, idx: idx, back: back, bindBack: bindBack };
+      if (onTV) tvWatch(page); else webWatch(page);
+    }, function (e) { if (my !== rid) return; $('#app').innerHTML = back + errBox('Could not load this series', e.message); bindBack(); });
+  }
+  function epLabel(e, i) { return e.n != null ? 'Episode ' + e.n : 'Part ' + (i + 1); }
+  function epList(P) {
+    return P.eps.map(function (e, i) { return '<div class="ep ' + (i === P.idx ? 'cur' : '') + ' ' + (prog[P.id].w.indexOf(e.v) >= 0 ? 'seen' : '') + '" data-i="' + i + '" tabindex="0"><img loading="lazy" src="' + esc(e.th) + '" alt=""><div><div class="no">' + epLabel(e, i) + '</div><div class="tt">' + esc(e.t) + '</div></div></div>'; }).join('');
+  }
+  function bindEpList(P, play) {
+    $('#epList').onclick = function (ev) { var d = ev.target.closest('.ep'); if (d) play(+d.getAttribute('data-i')); };
+    $('#epList').onkeydown = function (ev) { if (ev.keyCode === 13) { var d = ev.target.closest('.ep'); if (d) { ev.preventDefault(); play(+d.getAttribute('data-i')); } } };
+  }
+
+  function tvWatch(P) {
+    var id = P.id, eps = P.eps, i;
+    /* hand YouTube the playlist only if our episode order is the playlist's own order; then AdFree plays the next episode by itself */
+    var inOrder = true; for (i = 1; i < eps.length; i++) if (eps[i].pos < eps[i - 1].pos) { inOrder = false; break; }
+    var resumed = !!prog[id].last;
+    function render() {
+      var e = eps[P.idx];
+      $('#app').innerHTML = P.back + '<div class="hero"><img src="' + esc(e.th) + '" alt=""><div><h1>' + esc(P.meta.title) + '</h1><div class="sub">' + eps.length + ' episodes · ' + esc(P.meta.channel || '') + '</div>'
+        + '<div class="ctl"><button class="btn pri" id="playBtn">&#9654; ' + (resumed ? 'Resume ' : 'Play ') + epLabel(e, P.idx) + '</button>' + (P.idx > 0 ? '<button class="btn" id="startBtn">Start from ' + epLabel(eps[0], 0) + '</button>' : '') + '</div>'
+        + '<p class="note">Plays in YouTube AdFree: no ads, and the quality you set there. ' + (inOrder ? 'The next episode starts by itself. ' : '') + 'Press Back on the remote to return here.</p></div></div>'
+        + '<div class="eps"><h3>Episodes</h3><div id="epList">' + epList(P) + '</div></div>';
+      P.bindBack();
+      $('#playBtn').onclick = function () { play(P.idx); };
+      if ($('#startBtn')) $('#startBtn').onclick = function () { play(0); };
+      bindEpList(P, play);
     }
+    function play(i) {
+      P.idx = Math.min(Math.max(i, 0), eps.length - 1); var e = eps[P.idx];
+      prog[id].last = e.v; prog[id].at = Date.now(); if (prog[id].w.indexOf(e.v) < 0) prog[id].w.push(e.v); persist();
+      resumed = true;
+      launchYouTube(e.v, inOrder ? id : '', function (ok) { if (!ok) toast('Could not open YouTube AdFree. Check that it is installed.'); });
+      render(); try { $('#playBtn').focus(); } catch (x) {}
+    }
+    render();
+    try { $('#playBtn').focus(); } catch (x) {}
+  }
+
+  function webWatch(P) {
+    var id = P.id, eps = P.eps, idx = P.idx;
+    $('#app').innerHTML = P.back + '<div class="watch" id="wrap"><div><div class="player"><div id="yt"></div></div><h1 id="epT"></h1><div class="sub">' + esc(P.meta.title) + ' · ' + eps.length + ' episodes</div>'
+      + '<div class="ctl"><button class="btn" id="prev">&#9198; Prev</button><button class="btn" id="next">Next &#9197;</button><button class="btn" id="fs">&#9974; Full screen</button><button class="btn" id="th">Theater mode</button><button class="btn" id="onyt">Open on YouTube &#8599;</button></div></div>'
+      + '<div class="eps"><h3>Episodes</h3><div id="epList"></div></div></div>';
+    P.bindBack();
+    var draw = function () { P.idx = idx; $('#epList').innerHTML = epList(P); };
+    var play = function (i, auto) {
+      idx = Math.min(Math.max(i, 0), eps.length - 1); var e = eps[idx]; prog[id].last = e.v; prog[id].at = Date.now(); persist();
+      $('#epT').textContent = e.t; draw();
+      if (!auto) { var c = $('.ep.cur'); if (c) c.scrollIntoView(false); }
+      if (player && player.loadVideoById) player.loadVideoById(e.v);
+    };
+    bindEpList(P, play);
+    $('#prev').onclick = function () { play(idx - 1); }; $('#next').onclick = function () { play(idx + 1); };
+    $('#onyt').onclick = function () { window.open('https://www.youtube.com/watch?v=' + eps[idx].v + '&list=' + id, '_blank'); };
+    $('#th').onclick = function () { var w = $('#wrap'); w.classList.toggle('theater'); this.textContent = w.classList.contains('theater') ? 'Normal view' : 'Theater mode'; };
+    $('#fs').onclick = function () { try { var f = player && player.getIframe ? player.getIframe() : null; var r = f && (f.requestFullscreen || f.webkitRequestFullscreen); if (r) r.call(f); else toast('Use the player’s own full-screen button.'); } catch (e) { toast('Use the player’s own full-screen button.'); } };
+    $('#epT').textContent = eps[idx].t; draw();
+    var cur = $('.ep.cur'); if (cur) cur.scrollIntoView(false);
+    loadYT().then(function (ok) {
+      if (P.my !== rid) return;
+      if (!ok) { $('.player').innerHTML = '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:#8b93a3">The YouTube player could not load. Check the internet connection.</div>'; return; }
+      player = new YT.Player('yt', { videoId: eps[idx].v, playerVars: { rel: 0, playsinline: 1, autoplay: 1 }, events: {
+        onStateChange: function (e) {
+          if (e.data === YT.PlayerState.ENDED) { if (prog[id].w.indexOf(eps[idx].v) < 0) prog[id].w.push(eps[idx].v); persist(); if (idx < eps.length - 1) play(idx + 1, true); else draw(); }
+        },
+        onError: function (e) {
+          var code = e && e.data;
+          if (code === 101 || code === 150) { toast('The uploader only allows this episode on YouTube itself. Press "Open on YouTube".'); try { $('#onyt').focus(); } catch (x) {} }
+          else toast('This episode cannot be played here (error ' + code + '). Press Next.');
+        } } });
+    });
   }
 
   /* ---------- TV remote: arrow keys move focus to the nearest item in that direction ---------- */
-  var FOCUSABLE = 'a[href], button, input, select, [tabindex="0"]';
-  function visible(el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; }
+  /* the search box is left out on purpose: focusing it opens the TV keyboard, so it is only reached through the Search button */
+  var FOCUSABLE = 'a[href], button, select, [tabindex="0"]';
+  function visible(el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && el.getAttribute('tabindex') !== '-1'; }
   function moveFocus(dir) {
     var cur = document.activeElement;
     if (!cur || cur === document.body) { var f = $('.tile') || $(FOCUSABLE); if (f) f.focus(); return; }
@@ -183,7 +217,7 @@
   document.addEventListener('keydown', function (e) {
     var dir = DIRS[e.keyCode], t = e.target;
     if (!dir) return;
-    if (t && t.tagName === 'INPUT' && (dir === 'left' || dir === 'right') && t.value) return;   // let the text cursor move
+    if (t && t.tagName === 'INPUT') return;   // typing: leave the keys to the text box
     e.preventDefault(); moveFocus(dir);
   });
 
@@ -196,13 +230,25 @@
     else if ((m = h.match(/^#\/browse\/(\w+)(?:\?(.*))?$/))) { $('#q').value = ''; browseView(m[1], parseQs(m[2]), my); }
     else if ((m = h.match(/^#\/s\/(.+)$/))) { var q = decodeURIComponent(m[1]); $('#q').value = q; searchView(q, my); }
     else home(my);
+    searchLabel();
     window.scrollTo(0, 0);
   }
   window.addEventListener('hashchange', route);
   function go() { var q = $('#q').value.trim(); if (q.length >= 2) location.hash = '#/s/' + encodeURIComponent(q); else if (!q) location.hash = '#/'; }
-  $('#sf').addEventListener('submit', function (e) { e.preventDefault(); try { $('#q').blur(); } catch (x) {} go(); });
-  /* auto-search after a pause in typing; longer than on a phone because each search costs YouTube quota */
-  var dt; $('#q').addEventListener('input', function () { clearTimeout(dt); dt = setTimeout(function () { var q = $('#q').value.trim(); if (q.length >= 3) go(); else if (!q && location.hash.indexOf('#/s/') === 0) location.hash = '#/'; }, 1500); });
+  /* Search button -> box opens and takes focus (on the TV that brings up the keyboard); leaving the box closes it again */
+  function searchLabel() { var m = location.hash.match(/^#\/s\/(.+)$/); $('#sbtn').innerHTML = '&#128269; ' + (m ? esc(decodeURIComponent(m[1])) : 'Search'); }
+  function openSearch() { $('#sf').className = 'sbox open'; $('#sbtn').className = 'hide'; var q = $('#q'); q.removeAttribute('tabindex'); try { q.focus(); q.select(); } catch (x) {} }
+  function closeSearch() { if (document.activeElement === $('#q')) return; $('#sf').className = 'sbox'; $('#sbtn').className = ''; $('#q').setAttribute('tabindex', '-1'); }
+  $('#sbtn').onclick = openSearch;
+  $('#q').addEventListener('blur', function () { setTimeout(closeSearch, 250); });   // the delay lets a click on the search icon go through first
+  $('#sf').addEventListener('submit', function (e) {
+    e.preventDefault(); go();
+    try { $('#q').blur(); } catch (x) {}
+    closeSearch();
+    setTimeout(function () { if (!$('.tile')) try { $('#sbtn').focus(); } catch (x) {} }, 300);
+  });
+  /* on a computer, search after a pause in typing; on the TV only when you press Enter / the search key (each search costs quota) */
+  var dt; if (!onTV) $('#q').addEventListener('input', function () { clearTimeout(dt); dt = setTimeout(function () { var q = $('#q').value.trim(); if (q.length >= 3) go(); else if (!q && location.hash.indexOf('#/s/') === 0) location.hash = '#/'; }, 1500); });
   if (!PB.hasKey) { $('#app').innerHTML = errBox('Missing YouTube key', 'This copy was built without YOUTUBE_API_KEY. Put it in the .env file and run the build again.'); return; }
   route();
 })();
