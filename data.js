@@ -107,7 +107,18 @@
     if (!qt.length || !tt.length) return 0;
     return qt.filter(function (q) { return tt.some(function (t) { return tokMatch(q, t); }); }).length / qt.length;
   }
-  var NOISE = /\b(ost|songs?|scenes?|promos?|teasers?|clips?|status|reactions?|bts|behind the scenes|trailers?|shorts|compilation|funny|memes?|making)\b/i;
+  /* true when the title contains the query's words next to each other, in order ("Kabhi Main Kabhi Tum"),
+     not just scattered somewhere in a long song title */
+  function phrase(query, title) {
+    var qt = words(query), tt = words(title), i, j;
+    if (!qt.length) return false;
+    for (i = 0; i + qt.length <= tt.length; i++) {
+      for (j = 0; j < qt.length && tokMatch(qt[j], tt[i + j]); j++) {}
+      if (j === qt.length) return true;
+    }
+    return false;
+  }
+  var NOISE = /\b(ost|songs?|scenes?|promos?|teasers?|clips?|status|reactions?|reviews?|recaps?|explained|bts|behind the scenes|trailers?|shorts|compilation|funny|memes?|making)\b/i;
   /* browse + front page are Hindi/Urdu only: drop titles that announce another language */
   var OTHER_LANG = /\b(tamil|telugu|malayalam|kannada|bengali|bangla|punjabi|marathi|gujarati|korean|k-?drama|chinese|c-?drama|turkish|english|spanish|thai|indonesian|arabic)\b/i;
 
@@ -299,7 +310,7 @@
   function search(q) {
     q = String(q || '').trim().slice(0, 120);
     if (q.length < 2) return Promise.reject(fail('Type at least 2 characters.'));
-    return cached('search2:' + norm(q), 6 * H, function () {
+    return cached('search3:' + norm(q), 6 * H, function () {
       var noisy = NOISE.test(q), pool = {}, order = [];
       function add(p) { if (!pool[p.id]) { pool[p.id] = p; order.push(p.id); } }
       /* titles already on the front page that match well */
@@ -313,19 +324,22 @@
         rs.slice(0, 2).forEach(function (r) { if (r.ok) { ok = true; r.v.forEach(add); } });
         if (!ok && !order.length) throw rs[0].e;
         var cand = order.map(function (id) { var p = pool[id]; return extend(p, { score: +sim(q, p.title).toFixed(2) }); })
+          .map(function (p) { p.phrase = phrase(q, p.title); return p; })
           .filter(function (p) { return p.score >= 0.5 && p.count >= 2 && (noisy || !NOISE.test(p.title)); })
-          .sort(function (a, b) { return b.score - a.score || b.count - a.count; }).slice(0, 30);
+          .sort(function (a, b) { return (b.phrase - a.phrase) || b.score - a.score || b.count - a.count; }).slice(0, 30);
         return mapLimit(cand, 6, enrich).then(function (rich) {
           rich = rich.filter(Boolean);
           return channelInfo(rich.map(function (p) { return p.channelId; })).then(function (chOf) {
-            var now = Date.now(), maxCount = 0, firstOf = {};
-            rich = rich.map(function (p) { var ch = chOf(p.channelId); if (p.count > maxCount) maxCount = p.count; return withStatus(extend(p, { subs: ch.subs, official: isOfficial(p.channel, ch) }), now); });
-            rich.sort(function (a, b) { return ((a.blocked > 0.5) - (b.blocked > 0.5)) || ((b.score >= 0.99) - (a.score >= 0.99)) || (b.official - a.official) || b.views - a.views; });
+            var now = Date.now(), firstOf = {}, ref = null;
+            rich = rich.map(function (p) { var ch = chOf(p.channelId); return withStatus(extend(p, { subs: ch.subs, official: isOfficial(p.channel, ch) }), now); });
+            /* playable first, then the title as a phrase, then official channels, then most viewed */
+            rich.sort(function (a, b) { return ((a.blocked > 0.5) - (b.blocked > 0.5)) || (b.phrase - a.phrase) || ((b.score >= 0.99) - (a.score >= 0.99)) || (b.official - a.official) || b.views - a.views; });
+            ref = rich[0];   // "partial" is measured against the best match, not against any long playlist
             rich.forEach(function (p) {
               var k = p.count + '|' + p.views;                                 // same episode count + same total views = the same videos
               if (p.views && firstOf[k]) p.note = 'Same episodes as ' + firstOf[k].channel;
               else if (p.views) firstOf[k] = p;
-              if (!p.note && maxCount >= 10 && p.count < maxCount * 0.5) p.note = 'Partial: ' + p.count + ' of about ' + maxCount + ' episodes';
+              if (!p.note && p.phrase && ref && ref.count >= 10 && p.count < ref.count * 0.5) p.note = 'Partial: ' + p.count + ' of about ' + ref.count + ' episodes';
               if (p.blocked > 0.5) p.note = 'Not available in your country';
               else if (p.blocked > 0) p.note = Math.round(p.blocked * p.count) + ' episodes not available in your country';
             });
@@ -372,6 +386,6 @@
   window.PB = {
     hasKey: !!KEY, sections: SECTIONS, trending: trending, browse: browse, search: search,
     episodes: function (id) { return okId(id) ? episodes(id) : Promise.reject(fail('Bad playlist id.')); },
-    playlist: playlist, clearCache: clearCache, sim: sim, norm: norm
+    playlist: playlist, clearCache: clearCache, sim: sim, norm: norm, phrase: phrase
   };
 })();
