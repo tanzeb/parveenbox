@@ -10,7 +10,8 @@
 (function () {
   'use strict';
   var KEY = (window.PB_CONFIG && window.PB_CONFIG.youtubeKey) || '';
-  var H = 36e5, DAY = 864e5, CP = 'pbc1:';   // CP: cache prefix, bump to drop every cached entry
+  var REGION = (window.PB_CONFIG && window.PB_CONFIG.region) || 'IN';   // the viewer's country, for blocked videos
+  var H = 36e5, DAY = 864e5, CP = 'pbc2:';   // CP: cache prefix, bump to drop every cached entry
 
   function fail(msg, fatal) { var e = new Error(msg); e.fatal = !!fatal; return e; }
   function extend(a, b) { var o = {}, k; for (k in a) o[k] = a[k]; for (k in b) o[k] = b[k]; return o; }
@@ -231,11 +232,19 @@
       return page(undefined, 1).then(function () {
         var batches = [], k;
         for (k = 0; k < ids.length; k += 50) batches.push(ids.slice(k, k + 50));
-        return Promise.all(batches.map(function (b) { return yt('videos', { part: 'statistics', id: b.join(',') }); }));
+        return Promise.all(batches.map(function (b) { return yt('videos', { part: 'statistics,contentDetails', id: b.join(',') }); }));
       }).then(function (vs) {
         var views = 0;
-        vs.forEach(function (v) { (v.items || []).forEach(function (it) { views += Number(it.statistics && it.statistics.viewCount) || 0; }); });
-        return extend(p, { views: views, first: dates.length ? Math.min.apply(null, dates) : null, last: dates.length ? Math.max.apply(null, dates) : null });
+        var total = 0, blocked = 0;
+        vs.forEach(function (v) {
+          (v.items || []).forEach(function (it) {
+            var rr = it.contentDetails && it.contentDetails.regionRestriction;
+            views += Number(it.statistics && it.statistics.viewCount) || 0; total++;
+            if (rr && ((rr.blocked && rr.blocked.indexOf(REGION) >= 0) || (rr.allowed && rr.allowed.indexOf(REGION) < 0))) blocked++;
+          });
+        });
+        /* blocked: share of episodes YouTube will not play in the viewer's country (e.g. Pakistani channels in India) */
+        return extend(p, { views: views, blocked: total ? blocked / total : 0, first: dates.length ? Math.min.apply(null, dates) : null, last: dates.length ? Math.max.apply(null, dates) : null });
       });
     }, true).then(null, function (e) { if (e.fatal) throw e; return null; });   // quota problems surface; one bad playlist is skipped
   }
@@ -248,7 +257,7 @@
       return sectionPool(SECTIONS[key], opts).then(function (list) {
         return mapLimit(list.slice(0, 45), 6, enrich);
       }).then(function (rich) {
-        return rich.filter(function (p) { return p && (!year || yearOf(p.first) === year || yearOf(p.created) === year); })
+        return rich.filter(function (p) { return p && p.blocked <= 0.5 && (!year || yearOf(p.first) === year || yearOf(p.created) === year); })
           .map(function (p) { return extend(p, { section: key }); });
       });
     });
@@ -311,12 +320,14 @@
           return channelInfo(rich.map(function (p) { return p.channelId; })).then(function (chOf) {
             var now = Date.now(), maxCount = 0, firstOf = {};
             rich = rich.map(function (p) { var ch = chOf(p.channelId); if (p.count > maxCount) maxCount = p.count; return withStatus(extend(p, { subs: ch.subs, official: isOfficial(p.channel, ch) }), now); });
-            rich.sort(function (a, b) { return ((b.score >= 0.99) - (a.score >= 0.99)) || (b.official - a.official) || b.views - a.views; });
+            rich.sort(function (a, b) { return ((a.blocked > 0.5) - (b.blocked > 0.5)) || ((b.score >= 0.99) - (a.score >= 0.99)) || (b.official - a.official) || b.views - a.views; });
             rich.forEach(function (p) {
               var k = p.count + '|' + p.views;                                 // same episode count + same total views = the same videos
               if (p.views && firstOf[k]) p.note = 'Same episodes as ' + firstOf[k].channel;
               else if (p.views) firstOf[k] = p;
               if (!p.note && maxCount >= 10 && p.count < maxCount * 0.5) p.note = 'Partial: ' + p.count + ' of about ' + maxCount + ' episodes';
+              if (p.blocked > 0.5) p.note = 'Not available in your country';
+              else if (p.blocked > 0) p.note = Math.round(p.blocked * p.count) + ' episodes not available in your country';
             });
             return { query: q, results: rich };
           });
