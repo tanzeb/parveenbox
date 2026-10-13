@@ -14,7 +14,6 @@
 
   function fail(msg, fatal) { var e = new Error(msg); e.fatal = !!fatal; return e; }
   function extend(a, b) { var o = {}, k; for (k in a) o[k] = a[k]; for (k in b) o[k] = b[k]; return o; }
-  function values(map) { var out = [], k; for (k in map) out.push(map[k]); return out; }
 
   /* ---------- promise helpers ---------- */
   function settle(ps) {
@@ -177,7 +176,6 @@
   }
   /* official = a known broadcaster / streaming service, or a very large channel */
   function isOfficial(name, ch) { return OFFICIAL.test(String(name || '') + ' ' + ch.title) || ch.subs >= 3e6; }
-  function titleKey(t) { return norm(t).replace(/\b(full|episodes?|epi|ep|all|complete|hd|drama|serial|series|official|new|season \d+)\b/g, ' ').replace(/\s+/g, ' ').trim(); }
 
   /* ---------- sections (Hindi + Urdu only) ---------- */
   var SECTIONS = {
@@ -287,49 +285,40 @@
   }
 
   /* ---------- search ---------- */
+  /* Nothing is hidden: every matching upload is listed so you can choose. Exact title matches come first,
+     then official channels, then most viewed. Re-uploads and partial uploads get a label instead of being removed. */
   function search(q) {
     q = String(q || '').trim().slice(0, 120);
     if (q.length < 2) return Promise.reject(fail('Type at least 2 characters.'));
-    return cached('search:' + norm(q), 6 * H, function () {
+    return cached('search2:' + norm(q), 6 * H, function () {
       var noisy = NOISE.test(q), pool = {}, order = [];
       function add(p) { if (!pool[p.id]) { pool[p.id] = p; order.push(p.id); } }
       /* titles already on the front page that match well */
       var fromFront = trending().then(function (secs) {
         secs.forEach(function (s) { s.items.forEach(function (p) { if (sim(q, p.title) >= 0.7) add(p); }); });
       }, function () {});
-      var fromSearch = playlistSearch(q + ' full episodes', { max: 15 });   // runs alongside the front-page lookup
-      return settle([fromSearch, fromFront]).then(function (rs) {
-        if (rs[0].ok) rs[0].v.forEach(add);
-        else if (!order.length) throw rs[0].e;
+      /* two YouTube searches (100 quota units each): the title with "full episodes", and the title on its own */
+      var searches = [playlistSearch(q + ' full episodes', { max: 50 }), playlistSearch(q, { max: 50 })];
+      return settle(searches.concat([fromFront])).then(function (rs) {
+        var ok = false;
+        rs.slice(0, 2).forEach(function (r) { if (r.ok) { ok = true; r.v.forEach(add); } });
+        if (!ok && !order.length) throw rs[0].e;
         var cand = order.map(function (id) { var p = pool[id]; return extend(p, { score: +sim(q, p.title).toFixed(2) }); })
-          .filter(function (p) { return p.score >= 0.6 && p.count >= 3 && (noisy || !NOISE.test(p.title)); })
-          .sort(function (a, b) { return b.score - a.score || b.count - a.count; }).slice(0, 20);
-        var best = cand[0] ? cand[0].score : 0, found = cand.length;
-        /* only keep real matches for the title, then look at each one properly */
-        cand = cand.filter(function (p) { return p.score >= Math.max(0.6, best - 0.2); });
+          .filter(function (p) { return p.score >= 0.5 && p.count >= 2 && (noisy || !NOISE.test(p.title)); })
+          .sort(function (a, b) { return b.score - a.score || b.count - a.count; }).slice(0, 30);
         return mapLimit(cand, 6, enrich).then(function (rich) {
           rich = rich.filter(Boolean);
           return channelInfo(rich.map(function (p) { return p.channelId; })).then(function (chOf) {
-            rich = rich.map(function (p) { var ch = chOf(p.channelId); return extend(p, { subs: ch.subs, official: isOfficial(p.channel, ch) }); });
-            /* 1. same channel + same title uploaded twice: keep the one with most views */
-            var byKey = {};
+            var now = Date.now(), maxCount = 0, firstOf = {};
+            rich = rich.map(function (p) { var ch = chOf(p.channelId); if (p.count > maxCount) maxCount = p.count; return withStatus(extend(p, { subs: ch.subs, official: isOfficial(p.channel, ch) }), now); });
+            rich.sort(function (a, b) { return ((b.score >= 0.99) - (a.score >= 0.99)) || (b.official - a.official) || b.views - a.views; });
             rich.forEach(function (p) {
-              var k = p.channelId + '|' + titleKey(p.title), o = byKey[k];
-              if (!o || p.views > o.views || (p.views === o.views && p.count > o.count)) byKey[k] = p;
+              var k = p.count + '|' + p.views;                                 // same episode count + same total views = the same videos
+              if (p.views && firstOf[k]) p.note = 'Same episodes as ' + firstOf[k].channel;
+              else if (p.views) firstOf[k] = p;
+              if (!p.note && maxCount >= 10 && p.count < maxCount * 0.5) p.note = 'Partial: ' + p.count + ' of about ' + maxCount + ' episodes';
             });
-            rich = values(byKey);
-            /* 1b. other channels' playlists of the very same videos (same episode count and same total views) */
-            var bySet = {};
-            rich.forEach(function (p) { var k = p.count + '|' + p.views, o = bySet[k]; if (!p.views || !o || (p.official && !o.official)) bySet[k + (p.views ? '' : '|' + p.id)] = p; });
-            rich = values(bySet);
-            /* 2. partial uploads: hide playlists with far fewer episodes than the fullest one */
-            var maxCount = 0; rich.forEach(function (p) { if (p.count > maxCount) maxCount = p.count; });
-            rich = rich.filter(function (p) { return p.count >= Math.max(3, maxCount * 0.5); });
-            /* 3. official channels first, then by views */
-            var now = Date.now();
-            rich = rich.map(function (p) { return withStatus(p, now); })
-              .sort(function (a, b) { return (b.official - a.official) || b.views - a.views; }).slice(0, 10);
-            return { query: q, results: rich, best: best, hidden: Math.max(0, found - rich.length) };
+            return { query: q, results: rich };
           });
         });
       });

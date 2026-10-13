@@ -19,12 +19,12 @@
   function tile(p) {
     known[p.id] = p; var w = (prog[p.id] || { w: [] }).w.length, pct = p.count ? Math.min(100, Math.round(w / p.count * 100)) : 0;
     var stats = p.views != null ? fmtViews(p.views) + ' views' + (p.first ? ' · ' + new Date(p.first).getUTCFullYear() : '') + (p.status ? ' · ' + (p.status === 'ongoing' ? 'On-going' : 'Completed') : '') : '';
-    return '<a class="tile" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.title) + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + '</div></a>';
+    return '<a class="tile" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.title) + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + (p.note ? '<div class="m note2">' + esc(p.note) + '</div>' : '') + '</div></a>';
   }
   var skeleton = function (n) { var s = ''; for (var i = 0; i < n; i++) s += '<div class="sk"></div>'; return '<div class="row">' + s + '</div>'; };
   var SEC_NAMES = { all: 'All Hindi & Urdu', pk: 'Pakistani dramas', hi: 'Hindi TV serials', web: 'Hindi web series' };
   /* after a page renders, put the remote's focus somewhere useful */
-  function focusFirst(sel) { if (document.activeElement && document.activeElement !== document.body && document.activeElement.id !== 'q') return; var e = $(sel); if (e) try { e.focus(); } catch (x) {} }
+  function focusFirst(sel) { if (document.activeElement && document.activeElement !== document.body && document.activeElement.id !== 'q') return; var e = $(sel); if (e) try { e.focus({ preventScroll: true }); } catch (x) {} }
 
   /* ---------- home ---------- */
   function home(my) {
@@ -71,25 +71,19 @@
     PB.search(q).then(function (r) {
       if (my !== rid) return;
       var h = '';
-      if (r.results.length) h += '<h2 class="sec">Available here</h2><p class="note">Official channels first, then most viewed. ' + (r.hidden ? r.hidden + ' partial or repeated uploads hidden.' : 'Partial and repeated uploads are hidden.') + '</p><div class="grid">' + r.results.map(tile).join('') + '</div>';
+      if (r.results.length) h += '<h2 class="sec">' + r.results.length + ' uploads found</h2><p class="note">Exact title matches first, then official channels, then most viewed. Every upload is listed so you can choose; copies and partial uploads are labelled.</p><div class="grid">' + r.results.map(tile).join('') + '</div>';
       else h += errBox('Not found on YouTube', 'No full-episode playlist matched “' + q + '”. Try another spelling, or the original-language title.');
       $('#app').innerHTML = h;
-      var t = $('.tile'); if (t && document.activeElement !== $('#q')) try { t.focus(); } catch (x) {}
+      var t = $('.tile'); if (t && document.activeElement !== $('#q')) try { t.focus({ preventScroll: true }); } catch (x) {}
     }, function (e) { if (my !== rid) return; $('#app').innerHTML = errBox('Search failed', e.message); });
   }
 
   /* ---------- watch ----------
-     On the TV, episodes play in the "YouTube AdFree" app (webosbrew youtube-webos, app id youtube.leanback.v4):
-     no ads, its own quality setting, and the remote works normally in its player. A YouTube player embedded in
-     this page would show ads that ParveenBox can neither remove nor skip. Elsewhere (a computer) the embed is used. */
-  var onTV = typeof window.PalmServiceBridge === 'function', bridge = null;
-  function launchYouTube(v, list, done) {
-    try {
-      bridge = new PalmServiceBridge();          // keep a reference until the answer arrives
-      bridge.onservicecallback = function (m) { done(/"returnValue":\s*true/.test(m)); };
-      bridge.call('luna://com.webos.applicationManager/launch', JSON.stringify({ id: 'youtube.leanback.v4', params: { contentTarget: 'https://www.youtube.com/tv?v=' + v + (list ? '&list=' + list : '') } }));
-    } catch (e) { done(false); }
-  }
+     On the TV, episodes play on YouTube's own TV page (www.youtube.com/tv) inside this app. The ParveenBox TV app
+     adds webOSUserScripts/userScript.js to that page: it removes the ads, picks the highest quality, plays the next
+     episode in our order and brings you back here on Back. (A YouTube player embedded in this page cannot do any of
+     that and shows ads.) On a computer the embedded player is used. */
+  var onTV = typeof window.PalmServiceBridge === 'function';
   var ytReady = null;
   function loadYT() {
     if (ytReady) return ytReady;
@@ -126,15 +120,12 @@
   }
 
   function tvWatch(P) {
-    var id = P.id, eps = P.eps, i;
-    /* hand YouTube the playlist only if our episode order is the playlist's own order; then AdFree plays the next episode by itself */
-    var inOrder = true; for (i = 1; i < eps.length; i++) if (eps[i].pos < eps[i - 1].pos) { inOrder = false; break; }
-    var resumed = !!prog[id].last;
+    var id = P.id, eps = P.eps, resumed = !!prog[id].last;
     function render() {
       var e = eps[P.idx];
       $('#app').innerHTML = P.back + '<div class="hero"><img src="' + esc(e.th) + '" alt=""><div><h1>' + esc(P.meta.title) + '</h1><div class="sub">' + eps.length + ' episodes · ' + esc(P.meta.channel || '') + '</div>'
         + '<div class="ctl"><button class="btn pri" id="playBtn">&#9654; ' + (resumed ? 'Resume ' : 'Play ') + epLabel(e, P.idx) + '</button>' + (P.idx > 0 ? '<button class="btn" id="startBtn">Start from ' + epLabel(eps[0], 0) + '</button>' : '') + '</div>'
-        + '<p class="note">Plays in YouTube AdFree: no ads, and the quality you set there. ' + (inOrder ? 'The next episode starts by itself. ' : '') + 'Press Back on the remote to return here.</p></div></div>'
+        + '<p class="note">Plays without ads in the highest quality. The next episode starts by itself. Press Back on the remote to come back here.</p></div></div>'
         + '<div class="eps"><h3>Episodes</h3><div id="epList">' + epList(P) + '</div></div>';
       P.bindBack();
       $('#playBtn').onclick = function () { play(P.idx); };
@@ -143,10 +134,10 @@
     }
     function play(i) {
       P.idx = Math.min(Math.max(i, 0), eps.length - 1); var e = eps[P.idx];
-      prog[id].last = e.v; prog[id].at = Date.now(); if (prog[id].w.indexOf(e.v) < 0) prog[id].w.push(e.v); persist();
-      resumed = true;
-      launchYouTube(e.v, inOrder ? id : '', function (ok) { if (!ok) toast('Could not open YouTube AdFree. Check that it is installed.'); });
-      render(); try { $('#playBtn').focus(); } catch (x) {}
+      prog[id].last = e.v; prog[id].at = Date.now(); persist();
+      /* the episode list travels in the address; userScript.js picks it up on YouTube's page */
+      var state = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), i: P.idx, w: [] };
+      location.replace('https://www.youtube.com/tv#/watch?v=' + e.v + '&pb=' + encodeURIComponent(JSON.stringify(state)));
     }
     render();
     try { $('#playBtn').focus(); } catch (x) {}
@@ -191,42 +182,71 @@
   /* the search box is left out on purpose: focusing it opens the TV keyboard, so it is only reached through the Search button */
   var FOCUSABLE = 'a[href], button, select, [tabindex="0"]';
   function visible(el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && el.getAttribute('tabindex') !== '-1'; }
+  /* Left/Right only move within the same line (e.g. logo -> Search button, tile -> next tile).
+     Up/Down pick the nearest item, measured edge to edge, preferring items straight above/below. */
   function moveFocus(dir) {
     var cur = document.activeElement;
-    if (!cur || cur === document.body) { var f = $('.tile') || $(FOCUSABLE); if (f) f.focus(); return; }
-    var a = cur.getBoundingClientRect(), ax = a.left + a.width / 2, ay = a.top + a.height / 2, bestEl = null, bestD = Infinity;
+    if (!cur || cur === document.body) { var f = $('.tile') || $(FOCUSABLE); if (f) focusEl(f); return; }
+    var a = cur.getBoundingClientRect(), horiz = dir === 'left' || dir === 'right', bestEl = null, bestD = Infinity;
     var list = document.querySelectorAll(FOCUSABLE);
     for (var i = 0; i < list.length; i++) {
       var el = list[i]; if (el === cur || !visible(el)) continue;
-      var b = el.getBoundingClientRect(), bx = b.left + b.width / 2, by = b.top + b.height / 2, dx = bx - ax, dy = by - ay, main, side;
-      if (dir === 'left') { if (b.right > a.left + 1) continue; main = -dx; side = Math.abs(dy); }
-      else if (dir === 'right') { if (b.left < a.right - 1) continue; main = dx; side = Math.abs(dy); }
-      else if (dir === 'up') { if (b.bottom > a.top + 1) continue; main = -dy; side = Math.abs(dx); }
-      else { if (b.top < a.bottom - 1) continue; main = dy; side = Math.abs(dx); }
-      var d = main + side * 2.5;
+      var b = el.getBoundingClientRect(), main, side;
+      if (dir === 'left') main = a.left - b.right;
+      else if (dir === 'right') main = b.left - a.right;
+      else if (dir === 'up') main = a.top - b.bottom;
+      else main = b.top - a.bottom;
+      if (main < -2) continue;                                     // not in that direction
+      side = horiz ? Math.max(a.top, b.top) - Math.min(a.bottom, b.bottom) : Math.max(a.left, b.left) - Math.min(a.right, b.right);
+      side = Math.max(0, side);                                    // 0 = overlaps (same line / same column)
+      if (horiz && side > 0) continue;
+      var d = Math.max(0, main) + side * 3;
       if (d < bestD) { bestD = d; bestEl = el; }
     }
-    if (bestEl) {
-      bestEl.focus();
-      var r = bestEl.getBoundingClientRect();
-      if (r.top < 70 || r.bottom > window.innerHeight) bestEl.scrollIntoView(r.top < 70);
-      var row = bestEl.closest('.row'); if (row) { var rr = row.getBoundingClientRect(); if (r.left < rr.left || r.right > rr.right) row.scrollLeft += r.left - rr.left - 20; }
-    }
+    if (bestEl) focusEl(bestEl);
+  }
+  /* focus without the browser's own jump, then scroll just enough to show the item below the sticky header */
+  function focusEl(el) {
+    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    var hh = $('header').offsetHeight, r = el.getBoundingClientRect(), y = window.pageYOffset || document.documentElement.scrollTop;
+    if (r.top < hh + 8) { if (y + r.top - hh < 260) window.scrollTo(0, 0); else window.scrollBy(0, r.top - hh - 24); }
+    else if (r.bottom > window.innerHeight - 8) window.scrollBy(0, r.bottom - window.innerHeight + 24);
+    var row = el.closest('.row');
+    if (row) { var rr = row.getBoundingClientRect(); r = el.getBoundingClientRect(); if (r.left < rr.left + 6) row.scrollLeft -= rr.left - r.left + 30; else if (r.right > rr.right - 6) row.scrollLeft += r.right - rr.right + 30; }
+    var box = el.closest('.eps');
+    if (box) { var br = box.getBoundingClientRect(), top = br.top + 48; r = el.getBoundingClientRect(); if (r.top < top) box.scrollTop -= top - r.top + 10; else if (r.bottom > br.bottom) box.scrollTop += r.bottom - br.bottom + 10; }
   }
   var DIRS = { 37: 'left', 38: 'up', 39: 'right', 40: 'down' };
   document.addEventListener('keydown', function (e) {
+    if (e.keyCode === 461) { e.preventDefault(); goBack(); return; }   // the remote's Back key (webOS hands it to us)
     var dir = DIRS[e.keyCode], t = e.target;
     if (!dir) return;
     if (t && t.tagName === 'INPUT') return;   // typing: leave the keys to the text box
     e.preventDefault(); moveFocus(dir);
   });
 
+  function goBack() {
+    if (document.activeElement === $('#q')) { $('#q').blur(); closeSearch(); try { $('#sbtn').focus(); } catch (e) {} return; }
+    if (location.hash && location.hash !== '#/' && location.hash !== '#') { if (history.length > 1) history.back(); else location.hash = '#/'; return; }
+    if (window.PalmSystem && PalmSystem.platformBack) PalmSystem.platformBack();   // on the front page: leave the app
+  }
+  /* coming back from YouTube's page: remember the episode reached and the ones that played to the end */
+  function backFromYouTube(id, qs) {
+    var p = prog[id] = prog[id] || { w: [] };
+    if (/^[\w-]{11}$/.test(qs.last || '')) p.last = qs.last;
+    (qs.w || '').split(',').forEach(function (v) { if (/^[\w-]{11}$/.test(v) && p.w.indexOf(v) < 0) p.w.push(v); });
+    p.at = Date.now(); persist();
+  }
+
   /* ---------- routing & search box ---------- */
   function route() {
     var my = ++rid;
     if (player && player.destroy) { try { player.destroy(); } catch (e) {} player = null; }
     var h = location.hash, m;
-    if ((m = h.match(/^#\/p\/([\w-]+)$/))) watch(m[1], my);
+    if ((m = h.match(/^#\/p\/([\w-]+)(?:\?(.*))?$/))) {
+      if (m[2]) { backFromYouTube(m[1], parseQs(m[2])); try { history.replaceState(null, '', '#/p/' + m[1]); } catch (e) {} }
+      watch(m[1], my);
+    }
     else if ((m = h.match(/^#\/browse\/(\w+)(?:\?(.*))?$/))) { $('#q').value = ''; browseView(m[1], parseQs(m[2]), my); }
     else if ((m = h.match(/^#\/s\/(.+)$/))) { var q = decodeURIComponent(m[1]); $('#q').value = q; searchView(q, my); }
     else home(my);
