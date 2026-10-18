@@ -110,6 +110,20 @@
       webWatch(page);   // the TV plays inside ParveenBox too (the YouTube TV page hands off to the YouTube app)
     }, function (e) { if (my !== rid) return; $('#app').innerHTML = back + errBox('Could not load this series', e.message); bindBack(); });
   }
+  function topWatch(P) {
+    var id = P.id, eps = P.eps, resumed = !!prog[id].last;
+    var e = eps[P.idx];
+    $('#app').innerHTML = P.back + '<div class="hero"><img src="' + esc(e.th) + '" alt=""><div><h1>' + esc(P.meta.title) + '</h1><div class="sub">' + eps.length + ' episodes \u00b7 ' + esc(P.meta.channel || '') + '</div>'
+      + '<div class="ctl"><button class="btn pri" id="playBtn">&#9654; ' + (resumed ? 'Resume ' : 'Play ') + epLabel(e, P.idx) + '</button>' + (P.idx > 0 ? '<button class="btn" id="startBtn">Start from ' + epLabel(eps[0], 0) + '</button>' : '') + '</div>'
+      + '<p class="note">Plays full screen without ads, in the best quality. The next episode starts by itself. Press Back to come back here.</p></div></div>'
+      + '<div class="eps"><h3>Episodes</h3><div id="epList">' + epList(P) + '</div></div>';
+    P.bindBack();
+    var go = function (i) { i = Math.min(Math.max(i, 0), eps.length - 1); prog[id].last = eps[i].v; prog[id].at = Date.now(); persist(); playTop(id, eps, i, 0, P.meta.title); };
+    $('#playBtn').onclick = function () { go(P.idx); };
+    if ($('#startBtn')) $('#startBtn').onclick = function () { go(0); };
+    bindEpList(P, go);
+    try { $('#playBtn').focus(); } catch (x) {}
+  }
   function epLabel(e, i) { return e.n != null ? 'Episode ' + e.n : 'Part ' + (i + 1); }
   function epList(P) {
     return P.eps.map(function (e, i) { return '<div class="ep ' + (i === P.idx ? 'cur' : '') + ' ' + (prog[P.id].w.indexOf(e.v) >= 0 ? 'seen' : '') + '" data-i="' + i + '" tabindex="0"><img loading="lazy" src="' + esc(e.th) + '" alt=""><div><div class="no">' + epLabel(e, i) + '</div><div class="tt">' + esc(e.t) + '</div></div></div>'; }).join('');
@@ -143,8 +157,30 @@
     try { $('#playBtn').focus(); } catch (x) {}
   }
 
+  /* ---- TV: ad-free playback ----
+     The ParveenBox TV app's user script removes ads and forces the top quality on YouTube pages. If the TV runs it
+     inside the embedded player, ParveenBox hears from it ("adfree-active") and keeps playing here. If not, ParveenBox
+     plays episodes on YouTube's own player page full screen, where the script always runs (mode "top"). If that page
+     ever got handed to the YouTube app, ParveenBox notices on return and stays with the embedded player ("page-only"). */
+  function tvMode() { try { return localStorage.getItem('pb_tvmode') || 'page'; } catch (e) { return 'page'; } }
+  function setTvMode(m) { try { localStorage.setItem('pb_tvmode', m); } catch (e) {} }
+  function playTop(id, eps, i, start, title) {
+    var st = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), i: i, w: [], n: title || '' };
+    try { localStorage.setItem('pb_top_try', String(Date.now())); } catch (e) {}
+    location.href = 'https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' + (start > 30 ? '&start=' + Math.floor(start) : '') + '#pb=' + encodeURIComponent(JSON.stringify(st));
+  }
+  var adfreeSeen = false, adfreeQuality = '';
+  window.addEventListener('message', function (e) { if (e && e.data && e.data.pb === 'adfree-active') { adfreeSeen = true; adfreeQuality = e.data.quality || ''; } });
+  (function checkTopReturn() {
+    var tryAt = 0; try { tryAt = +localStorage.getItem('pb_top_try') || 0; localStorage.removeItem('pb_top_try'); } catch (e) {}
+    if (!tryAt) return;
+    if (/[?&]pbok=1/.test(location.hash)) { try { localStorage.setItem('pb_tvok', '1'); } catch (e) {} }
+    else if (Date.now() - tryAt < 6 * 3600e3) { try { if (localStorage.getItem('pb_tvok') !== '1') setTvMode('page-only'); } catch (e) {} }
+  })();
+
   function webWatch(P) {
     var id = P.id, eps = P.eps, idx = P.idx;
+    if (onTV && tvMode() === 'top') { topWatch(P); return; }
     $('#app').innerHTML = P.back + '<div class="watch" id="wrap"><div><div class="player"><div id="yt"></div></div><h1 id="epT"></h1><div class="sub">' + esc(P.meta.title) + ' · ' + eps.length + ' episodes</div>'
       + '<div class="ctl"><button class="btn" id="prev">&#9198; Prev</button><button class="btn" id="next">Next &#9197;</button><button class="btn" id="fs">&#9974; Full screen</button><button class="btn" id="th">Theater mode</button><button class="btn" id="onyt">Open on YouTube &#8599;</button></div></div>'
       + '<div class="eps"><h3>Episodes</h3><div id="epList"></div></div></div>';
@@ -169,6 +205,17 @@
       if (!ok) { $('.player').innerHTML = '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:#8b93a3">The YouTube player could not load. Check the internet connection.</div>'; return; }
       player = new YT.Player('yt', { videoId: eps[idx].v, playerVars: { rel: 0, playsinline: 1, autoplay: 1 }, events: {
         onStateChange: function (e) {
+          if (onTV && e.data === YT.PlayerState.PLAYING && tvMode() === 'page' && !webWatch._checking) {
+            webWatch._checking = true;
+            setTimeout(function () {
+              webWatch._checking = false;
+              if (P.my !== rid || adfreeSeen || tvMode() !== 'page') return;
+              setTvMode('top');
+              var t = 0; try { t = player.getCurrentTime(); player.pauseVideo(); } catch (x) {}
+              toast('Switching to full-screen ad-free playback…');
+              setTimeout(function () { if (P.my === rid) playTop(id, eps, idx, t, P.meta.title); }, 1500);
+            }, 8000);
+          }
           if (e.data === YT.PlayerState.ENDED) { if (prog[id].w.indexOf(eps[idx].v) < 0) prog[id].w.push(eps[idx].v); persist(); if (idx < eps.length - 1) play(idx + 1, true); else draw(); }
         },
         onError: function (e) {
