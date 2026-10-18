@@ -231,6 +231,48 @@
     });
   }
 
+  /* ---------- most watched this month ----------
+     This month's most-viewed Pakistani drama episodes (one video search + their view counts), added up per drama and
+     matched to the drama's full-episode playlist from an official channel. Saved for a day: about 200 quota units. */
+  function monthly() {
+    return cached('monthly', 24 * H, function () {
+      var after = iso(Date.now() - 30 * DAY);
+      var vids = yt('search', { part: 'snippet', type: 'video', q: 'Pakistani drama episode', order: 'viewCount', publishedAfter: after, maxResults: 50, regionCode: 'PK', relevanceLanguage: 'ur' });
+      var pool = settle([trending(), playlistSearch('Pakistani drama serial episodes', { order: 'date', after: iso(Date.now() - 150 * DAY), max: 50, region: 'PK', lang: 'ur' })]);
+      return Promise.all([vids, pool]).then(function (r) {
+        var items = (r[0].items || []).filter(function (it) { return it.id && it.id.videoId && it.snippet; });
+        var lists = [];
+        if (r[1][0].ok) r[1][0].v.forEach(function (sct) { lists = lists.concat(sct.items); });
+        if (r[1][1].ok) lists = lists.concat(r[1][1].v.filter(function (p) { return eligible(p, SECTIONS.pk); }));
+        if (!items.length || !lists.length) return [];
+        return yt('videos', { part: 'statistics', id: items.map(function (it) { return it.id.videoId; }).join(','), maxResults: 50 }).then(function (vs) {
+          var views = {}; (vs.items || []).forEach(function (v) { views[v.id] = Number(v.statistics && v.statistics.viewCount) || 0; });
+          var shows = {}, order = [];
+          items.forEach(function (it) {
+            var t = dec(it.snippet.title), ch = dec(it.snippet.channelTitle);
+            if (NOISE.test(t) || OTHER_LANG.test(t)) return;
+            var name = showTitle(t).replace(/\b(episode|epi|ep)\b.*$/i, '').replace(/[\s:,-]+$/, '').trim();
+            if (name.length < 2) return;
+            var k = ch + '|' + norm(name);
+            if (!shows[k]) { shows[k] = { name: name, channel: ch, views: 0 }; order.push(k); }
+            shows[k].views += views[it.id.videoId] || 0;
+          });
+          var seen = {}, out = [];
+          order.map(function (k) { return shows[k]; }).sort(function (a, b) { return b.views - a.views; }).forEach(function (sh) {
+            var best = null, bestScore = 0;
+            lists.forEach(function (p) {
+              if (seen[p.id] || p.channel !== sh.channel) return;
+              var sc = Math.min(sim(sh.name, p.title), sim(showTitle(p.title), sh.name));
+              if (sc > bestScore) { bestScore = sc; best = p; }
+            });
+            if (best && bestScore >= 0.8) { seen[best.id] = 1; out.push(extend(best, { monthViews: sh.views })); }
+          });
+          return out.slice(0, 20);
+        });
+      });
+    });
+  }
+
   /* ---------- browse: whole section, with real view counts and dates ---------- */
   function enrich(p) {
     return cached('en:' + p.id, 7 * DAY, function () {
@@ -409,7 +451,7 @@
   }
 
   window.PB = {
-    hasKey: !!KEY, sections: SECTIONS, trending: trending, browse: browse, search: search,
+    hasKey: !!KEY, sections: SECTIONS, trending: trending, monthly: monthly, browse: browse, search: search,
     episodes: function (id) { return okId(id) ? episodes(id) : Promise.reject(fail('Bad playlist id.')); },
     playlist: playlist, clearCache: clearCache, sim: sim, norm: norm, phrase: phrase, showTitle: showTitle,
     onStale: function (fn) { staleListener = fn; }

@@ -16,7 +16,7 @@
   function fmtViews(n) { n = Number(n) || 0; if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'; if (n >= 1e3) return Math.round(n / 1e3) + 'K'; return String(n); }
   function parseQs(s) { var o = {}; String(s || '').split('&').forEach(function (kv) { if (!kv) return; var i = kv.indexOf('='); o[decodeURIComponent(i < 0 ? kv : kv.slice(0, i))] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1)); }); return o; }
 
-  var SITE_VERSION = '2.5.0';
+  var SITE_VERSION = '2.6.0';
   var APP_VERSION = (function () { var m = /[?&]app=([\d.]+)/.exec(location.search); if (m) { ls.set('pb_appver', m[1]); return m[1]; } return ls.get('pb_appver', ''); })();
   var favs = ls.get('pb_favs', []);
   function isFav(id) { for (var i = 0; i < favs.length; i++) if (favs[i].id === id) return true; return false; }
@@ -38,7 +38,7 @@
 
   function tile(p) {
     known[p.id] = p; var w = (prog[p.id] || { w: [] }).w.length, pct = p.count ? Math.min(100, Math.round(w / p.count * 100)) : 0;
-    var stats = p.views != null ? fmtViews(p.views) + ' views' + (p.first ? ' · ' + new Date(p.first).getUTCFullYear() : '') + (p.status ? ' · ' + (p.status === 'ongoing' ? 'On-going' : 'Completed') : '') : '';
+    var stats = p.monthViews ? fmtViews(p.monthViews) + ' views this month' : p.views != null ? fmtViews(p.views) + ' views' + (p.first ? ' · ' + new Date(p.first).getUTCFullYear() : '') + (p.status ? ' · ' + (p.status === 'ongoing' ? 'On-going' : 'Completed') : '') : '';
     return '<a class="tile" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.full ? p.title : PB.showTitle(p.title)) + (isFav(p.id) ? ' <span style="color:#f5c518">&#9733;</span>' : '') + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + (p.note ? '<div class="m note2">' + esc(p.note) + '</div>' : '') + '</div></a>';
   }
   var skeleton = function (n) { var s = ''; for (var i = 0; i < n; i++) s += '<div class="sk"></div>'; return '<div class="row">' + s + '</div>'; };
@@ -57,12 +57,22 @@
       + '<p class="note">Results are saved on this TV for days to protect the daily YouTube limit. <a href="#" id="clearBtn" style="text-decoration:underline">Clear saved results</a></p>'
       + '<p class="note">ParveenBox ' + (APP_VERSION ? 'app ' + esc(APP_VERSION) + ' \u00b7 ' : '') + 'version ' + SITE_VERSION + (onTV ? '<br>' + esc(adfreeStatus()) : '') + '</p>';
     var bindClear = function () { var c = $('#clearBtn'); if (c) c.onclick = function (e) { e.preventDefault(); PB.clearCache(); toast('Saved results cleared.'); route(); }; };
-    $('#app').innerHTML = h + '<h2 class="sec">Pakistani dramas: most watched now</h2>' + skeleton(8) + tail;
+    var month = '<div id="mrow"><h2 class="sec">Most watched this month</h2>' + skeleton(8) + '</div>';
+    $('#app').innerHTML = h + month + '<h2 class="sec">Pakistani dramas: most watched now</h2>' + skeleton(8) + tail;
     bindClear(); focusFirst('.tile, .chip');
+    var fillMonth = function () {
+      PB.monthly().then(function (list) {
+        if (my !== rid) return;
+        var box = $('#mrow'); if (!box) return;
+        box.innerHTML = list.length ? '<h2 class="sec">Most watched this month</h2><div class="row">' + list.map(tile).join('') + '</div>' : '';
+        focusFirst('.tile, .chip');
+      }, function () { var box = $('#mrow'); if (box) box.innerHTML = ''; });
+    };
     PB.trending().then(function (secs) {
       if (my !== rid) return;
-      $('#app').innerHTML = h + secs.map(function (s) { return '<h2 class="sec"><a href="#/browse/pk">Pakistani dramas: most watched now<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + s.items.map(tile).join('') + '</div>'; }).join('') + tail;
-      bindClear(); focusFirst('.tile, .chip');
+      var m = $('#mrow') ? $('#mrow').outerHTML : '';
+      $('#app').innerHTML = h + m + secs.map(function (s) { return '<h2 class="sec"><a href="#/browse/pk">Pakistani dramas: most watched now<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + s.items.map(tile).join('') + '</div>'; }).join('') + tail;
+      bindClear(); focusFirst('.tile, .chip'); fillMonth();
     }, function (e) { if (my !== rid) return; $('#app').innerHTML = h + errBox('Could not load the front page', e.message) + tail; bindClear(); });
   }
 
@@ -207,7 +217,7 @@
   function tvMode() { try { var m = localStorage.getItem('pb_tvmode'); return m === 'page-only' ? 'page-only' : 'top'; } catch (e) { return 'top'; } }
   function setTvMode(m) { try { localStorage.setItem('pb_tvmode', m); } catch (e) {} }
   function playTop(id, eps, i, start, title) {
-    var st = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), i: i, w: [], n: title || '' };
+    var st = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), lb: eps.map(function (x, j) { return x.n != null ? x.n : j + 1; }), i: i, w: [], n: title || '' };
     try { localStorage.setItem('pb_top_try', String(Date.now())); } catch (e) {}
     location.href = 'https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' + (start > 30 ? '&start=' + Math.floor(start) : '') + '#pb=' + encodeURIComponent(JSON.stringify(st));
   }
@@ -302,6 +312,9 @@
       if (d < bestD) { bestD = d; bestEl = el; }
     }
     if (bestEl) focusEl(bestEl);
+    /* nothing more to focus that way: scroll the page, so text at the bottom (version, notes) can be read */
+    else if (dir === 'down') window.scrollBy(0, Math.round(window.innerHeight * 0.4));
+    else if (dir === 'up') window.scrollBy(0, -Math.round(window.innerHeight * 0.4));
   }
   /* focus without the browser's own jump, then scroll just enough to show the item below the sticky header */
   function focusEl(el) {
