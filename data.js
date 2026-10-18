@@ -11,7 +11,7 @@
   'use strict';
   var KEY = (window.PB_CONFIG && window.PB_CONFIG.youtubeKey) || '';
   var REGION = (window.PB_CONFIG && window.PB_CONFIG.region) || 'IN';   // the viewer's country, for blocked videos
-  var H = 36e5, DAY = 864e5, CP = 'pbc2:';   // CP: cache prefix, bump to drop every cached entry
+  var H = 36e5, DAY = 864e5, CP = 'pbc3:';   // CP: cache prefix, bump to drop every cached entry
 
   function fail(msg, fatal) { var e = new Error(msg); e.fatal = !!fatal; return e; }
   function extend(a, b) { var o = {}, k; for (k in a) o[k] = a[k]; for (k in b) o[k] = b[k]; return o; }
@@ -54,7 +54,7 @@
     try {
       for (i = 0; i < localStorage.length; i++) {
         k = localStorage.key(i);
-        if (k && k.indexOf('pbc') === 0) { o = lsGet(k); list.push({ k: k, t: (o && o.t) || 0 }); }
+        if (k && k.indexOf('pbc') === 0) { o = lsGet(k); list.push({ k: k, t: (o && o.t) || 0 }); }   /* old prefixes go first */
       }
       if (!list.length) return false;
       list.sort(function (a, b) { return a.t - b.t; });
@@ -62,14 +62,19 @@
       return true;
     } catch (e) { return false; }
   }
-  function cached(key, ttl, fn, memOnly) {
-    var now = Date.now(), m = mem[key], s;
-    if (m && now - m.t < ttl) return m.p;
+  var staleListener = null;
+  function cached(key, ttl, fn, memOnly, force) {
+    var now = Date.now(), m = mem[key], s = null;
+    if (!force && m && now - m.t < ttl) return m.p;
     if (!memOnly) {
       s = lsGet(CP + key);
-      if (s && now - s.t < ttl) { mem[key] = { t: s.t, p: Promise.resolve(s.v) }; return mem[key].p; }
+      if (!force && s && now - s.t < ttl) { mem[key] = { t: s.t, p: Promise.resolve(s.v) }; return mem[key].p; }
     }
-    var p = Promise.resolve().then(fn).then(function (v) { if (!memOnly) lsPut(CP + key, { t: now, v: v }); return v; });
+    var p = Promise.resolve().then(fn).then(function (v) { if (!memOnly) lsPut(CP + key, { t: now, v: v }); return v; }, function (e) {
+      /* the daily YouTube limit is used up, or no internet: show what was saved before instead of an error */
+      if (s && s.v != null) { if (staleListener) staleListener(e, s.t); return s.v; }
+      throw e;
+    });
     mem[key] = { t: now, p: p };
     p.then(null, function () { if (mem[key] && mem[key].p === p) delete mem[key]; });
     return p;
@@ -118,9 +123,10 @@
     }
     return false;
   }
-  var NOISE = /\b(ost|songs?|scenes?|promos?|teasers?|clips?|status|reactions?|reviews?|recaps?|explained|bts|behind the scenes|trailers?|shorts|compilation|funny|memes?|making)\b/i;
+  var NOISE = /\b(ost|osts|songs?|title (song|track)|lyrics?|lyrical|music|audio|naat|naats|qawwali|scenes?|promos?|teasers?|trailers?|clips?|status|reactions?|reviews?|recaps?|explained|bts|behind the scenes|shorts|compilation|funny|memes?|making|highlights?|best moments|interviews?|podcasts?|talk show|morning show|game show|comedy show|news|cooking|recipes?|jeeto pakistan|ramzan|transmission|live stream|bloopers?|mashup|whatsapp|tiktok|fan ?made|then and now|real life|top \d+|ringtones?)\b/i;
   /* browse + front page are Hindi/Urdu only: drop titles that announce another language */
-  var OTHER_LANG = /\b(tamil|telugu|malayalam|kannada|bengali|bangla|punjabi|marathi|gujarati|korean|k-?drama|chinese|c-?drama|turkish|english|spanish|thai|indonesian|arabic)\b/i;
+  /* Pakistani dramas only: drop titles that announce something else ("English subtitles" is fine) */
+  var OTHER_LANG = /\b(hindi|indian|star ?plus|zee ?tv|zee5|colors tv|sony (tv|sab|liv)|sab tv|star bharat|dangal|tamil|telugu|malayalam|kannada|bengali|bangla|marathi|gujarati|korean|k-?drama|chinese|c-?drama|turkish|dubbed|spanish|thai|indonesian|arabic)\b/i;
 
   /* ---------- YouTube ---------- */
   function yt(ep, params) {
@@ -191,11 +197,9 @@
 
   /* ---------- sections (Hindi + Urdu only) ---------- */
   var SECTIONS = {
-    pk: { title: 'Pakistani dramas', minEps: 8, region: 'PK', lang: 'ur', queries: ['Pakistani drama serial full episodes', 'Urdu drama all episodes HD'] },
-    hi: { title: 'Hindi TV serials', minEps: 10, region: 'IN', lang: 'hi', queries: ['Hindi TV serial full episodes', 'Indian TV serial all episodes Hindi'] },
-    web: { title: 'Hindi web series', minEps: 4, region: 'IN', lang: 'hi', queries: ['Hindi web series full episodes', 'web series all episodes Hindi season'] }
+    pk: { title: 'Pakistani dramas', minEps: 8, region: 'PK', lang: 'ur', queries: ['Pakistani drama serial full episodes', 'Urdu drama all episodes HD'] }
   };
-  var SEC_KEYS = ['pk', 'hi', 'web'];
+  var SEC_KEYS = ['pk'];
   function eligible(p, sec) { return p.count >= sec.minEps && p.count <= 2500 && !NOISE.test(p.title) && !OTHER_LANG.test(p.title); }
 
   /* run every query of a section, keep eligible playlists once each, in query order */
@@ -213,7 +217,7 @@
 
   /* ---------- front page: most viewed right now ---------- */
   function trending() {
-    return cached('trending', 12 * H, function () {
+    return cached('trending', 24 * H, function () {
       var after = iso(Date.now() - 730 * DAY);                       // last ~2 years
       return settle(SEC_KEYS.map(function (key) { return sectionPool(SECTIONS[key], { order: 'viewCount', after: after, max: 25 }); })).then(function (rs) {
         var out = [], err = null;
@@ -229,7 +233,7 @@
 
   /* ---------- browse: whole section, with real view counts and dates ---------- */
   function enrich(p) {
-    return cached('en:' + p.id, 12 * H, function () {
+    return cached('en:' + p.id, 7 * DAY, function () {
       var ids = [], dates = [];
       function page(tok, n) {
         return yt('playlistItems', { part: 'contentDetails', maxResults: 50, playlistId: p.id, pageToken: tok }).then(function (j) {
@@ -262,7 +266,7 @@
   function yearOf(ms) { return ms ? new Date(ms).getUTCFullYear() : null; }
 
   function browseSection(key, year) {
-    return cached('browse:' + key + ':' + (year || 0), 12 * H, function () {
+    return cached('browse:' + key + ':' + (year || 0), 7 * DAY, function () {
       var opts = { order: 'viewCount', max: 50 };
       if (year) { opts.after = year + '-01-01T00:00:00Z'; opts.before = (year + 1) + '-01-01T00:00:00Z'; }
       return sectionPool(SECTIONS[key], opts).then(function (list) {
@@ -307,52 +311,73 @@
   /* ---------- search ---------- */
   /* Nothing is hidden: every matching upload is listed so you can choose. Exact title matches come first,
      then official channels, then most viewed. Re-uploads and partial uploads get a label instead of being removed. */
-  function search(q) {
-    q = String(q || '').trim().slice(0, 120);
-    if (q.length < 2) return Promise.reject(fail('Type at least 2 characters.'));
-    return cached('search3:' + norm(q), 6 * H, function () {
-      var noisy = NOISE.test(q), pool = {}, order = [];
-      function add(p) { if (!pool[p.id]) { pool[p.id] = p; order.push(p.id); } }
-      /* titles already on the front page that match well */
-      var fromFront = trending().then(function (secs) {
-        secs.forEach(function (s) { s.items.forEach(function (p) { if (sim(q, p.title) >= 0.7) add(p); }); });
-      }, function () {});
-      /* two YouTube searches (100 quota units each): the title with "full episodes", and the title on its own */
-      var searches = [playlistSearch(q + ' full episodes', { max: 50 }), playlistSearch(q, { max: 50 })];
-      return settle(searches.concat([fromFront])).then(function (rs) {
-        var ok = false;
-        rs.slice(0, 2).forEach(function (r) { if (r.ok) { ok = true; r.v.forEach(add); } });
-        if (!ok && !order.length) throw rs[0].e;
-        var cand = order.map(function (id) { var p = pool[id]; return extend(p, { score: +sim(q, p.title).toFixed(2) }); })
-          .map(function (p) { p.phrase = phrase(q, p.title); return p; })
-          .filter(function (p) { return p.score >= 0.5 && p.count >= 2 && (noisy || !NOISE.test(p.title)); })
-          .sort(function (a, b) { return (b.phrase - a.phrase) || b.score - a.score || b.count - a.count; }).slice(0, 30);
-        return mapLimit(cand, 6, enrich).then(function (rich) {
+  /* ---------- search: dramas only, one group per drama, the original upload first ----------
+     One YouTube search (100 quota units) for "<title> drama". Only real drama playlists are kept: at least 4 videos,
+     the typed title must match (spelling mistakes allowed), and songs, OST, scenes, promos, clips and non-Pakistani
+     titles are left out. Uploads of the same drama are grouped; the original (official channel, then most views)
+     comes first and the other uploads follow, labelled, so you can still choose. Saved for two weeks. */
+  var FILLER = /\b(full|episodes?|epi|ep|all|complete|hd|4k|drama|dramas|serial|series|official|new|latest|season|part|pakistani|urdu|presented by|digitally|powered by|watch|online|free|only on|exclusive|last|\d+)\b/g;
+  function titleKey(title, channel) {
+    var k = norm(title).replace(FILLER, ' ');
+    words(channel).forEach(function (w) { if (w.length > 2) k = k.replace(new RegExp('\\b' + w + '\\b', 'g'), ' '); });
+    k = k.replace(/\b(hum|tv|ary|digital|geo|har|pal|green|entertainment|express|ptv|aplus|plus|one|network|by|on|with|and|the|ft|feat)\b/g, ' ');
+    return k.replace(/\s+/g, ' ').trim();
+  }
+  function sameShow(a, b) {
+    if (!a || !b) return a === b;
+    if (a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0) return true;
+    return sim(a, b) >= 0.85 && sim(b, a) >= 0.85;
+  }
+  /* "Dhoop Kinare | Episode 01 - 27 | HUM TV" -> "Dhoop Kinare" */
+  function showTitle(t) {
+    var s0 = String(t || '').split(/\s[|–—-]\s|\|/)[0];
+    s0 = s0.replace(/\b(full|all|complete|hd)\b.*$/i, '').replace(/\b(drama serial|episodes?|ep)\b.*$/i, '').replace(/[\s:,-]+$/, '').trim();
+    return s0.length >= 2 ? s0 : String(t || '').trim();
+  }
+  function search(q, force) {
+    q = String(q || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    if (q.length < 2) return Promise.reject(fail('Type at least 2 letters.'));
+    return cached('search4:' + norm(q), 14 * DAY, function () {
+      var wantNoise = NOISE.test(q), wantOther = OTHER_LANG.test(q);
+      return playlistSearch(q + ' drama', { max: 50, region: 'IN', lang: 'ur' }).then(function (found) {
+        var cand = found.map(function (p) { return extend(p, { score: sim(q, p.title), phrase: phrase(q, p.title) }); })
+          .filter(function (p) { return p.score >= 0.75 && p.count >= 4 && (wantNoise || !NOISE.test(p.title)) && (wantOther || !OTHER_LANG.test(p.title)); })
+          .sort(function (a, b) { return (b.phrase - a.phrase) || (b.score - a.score) || (b.count - a.count); }).slice(0, 14);
+        return mapLimit(cand, 5, enrich).then(function (rich) {
           rich = rich.filter(Boolean);
           return channelInfo(rich.map(function (p) { return p.channelId; })).then(function (chOf) {
-            var now = Date.now(), firstOf = {}, ref = null;
-            rich = rich.map(function (p) { var ch = chOf(p.channelId); return withStatus(extend(p, { subs: ch.subs, official: isOfficial(p.channel, ch) }), now); });
-            /* playable first, then the title as a phrase, then official channels, then most viewed */
-            rich.sort(function (a, b) { return ((a.blocked > 0.5) - (b.blocked > 0.5)) || (b.phrase - a.phrase) || ((b.score >= 0.99) - (a.score >= 0.99)) || (b.official - a.official) || b.views - a.views; });
-            ref = rich[0];   // "partial" is measured against the best match, not against any long playlist
-            rich.forEach(function (p) {
-              var k = p.count + '|' + p.views;                                 // same episode count + same total views = the same videos
-              if (p.views && firstOf[k]) p.note = 'Same episodes as ' + firstOf[k].channel;
-              else if (p.views) firstOf[k] = p;
-              if (!p.note && p.phrase && ref && ref.count >= 10 && p.count < ref.count * 0.5) p.note = 'Partial: ' + p.count + ' of about ' + ref.count + ' episodes';
-              if (p.blocked > 0.5) p.note = 'Not available in your country';
-              else if (p.blocked > 0) p.note = Math.round(p.blocked * p.count) + ' episodes not available in your country';
+            var now = Date.now();
+            var items = rich.map(function (p) { var ch = chOf(p.channelId); return withStatus(extend(p, { subs: ch.subs, official: isOfficial(p.channel, ch), key: titleKey(p.title, p.channel) }), now); });
+            items.sort(function (a, b) { return (b.phrase - a.phrase) || (b.official - a.official) || (b.views - a.views); });
+            var groups = [];
+            items.forEach(function (p) {
+              var g = null; for (var i = 0; i < groups.length; i++) if (sameShow(groups[i].key, p.key)) { g = groups[i]; break; }
+              if (g) g.items.push(p); else groups.push({ key: p.key, items: [p] });
             });
-            return { query: q, results: rich };
+            groups.forEach(function (g) {
+              g.items.sort(function (a, b) { return ((a.blocked > 0.5) - (b.blocked > 0.5)) || (b.official - a.official) || (b.views - a.views); });
+              var orig = g.items[0], firstOf = {};
+              orig.original = true;
+              g.title = showTitle(orig.title);
+              g.items.forEach(function (p) {
+                var k = p.count + '|' + p.views;
+                if (p !== orig && p.views && firstOf[k]) p.note = 'Same episodes as ' + firstOf[k].channel;
+                else if (p.views) firstOf[k] = p;
+                if (!p.note && p !== orig && orig.count >= 8 && p.count < orig.count * 0.6) p.note = 'Partial: ' + p.count + ' of ' + orig.count + ' episodes';
+                if (p.blocked > 0.5) p.note = 'Not available in your country';
+              });
+            });
+            groups.sort(function (a, b) { return (b.items[0].phrase - a.items[0].phrase) || (b.items[0].official - a.items[0].official) || (b.items[0].views - a.items[0].views); });
+            return { query: q, groups: groups.map(function (g) { return { title: g.title, items: g.items }; }) };
           });
         });
       });
-    });
+    }, false, force);
   }
 
   /* ---------- episodes ---------- */
   function episodes(id) {
-    return cached('ep:' + id, 3 * H, function () {
+    return cached('ep:' + id, 6 * H, function () {
       var items = [];
       function page(tok) {
         return yt('playlistItems', { part: 'snippet', maxResults: 50, playlistId: id, pageToken: tok }).then(function (j) {
@@ -378,7 +403,7 @@
   function okId(id) { return /^[\w-]{10,60}$/.test(id || ''); }
   function playlist(id) {
     if (!okId(id)) return Promise.reject(fail('Bad playlist id.'));
-    return cached('pl:' + id, 24 * H, function () {
+    return cached('pl:' + id, 7 * DAY, function () {
       return playlistInfo([id]).then(function (r) { if (!r[0]) throw fail('Playlist not found or private.'); return r[0]; });
     });
   }
@@ -386,6 +411,7 @@
   window.PB = {
     hasKey: !!KEY, sections: SECTIONS, trending: trending, browse: browse, search: search,
     episodes: function (id) { return okId(id) ? episodes(id) : Promise.reject(fail('Bad playlist id.')); },
-    playlist: playlist, clearCache: clearCache, sim: sim, norm: norm, phrase: phrase
+    playlist: playlist, clearCache: clearCache, sim: sim, norm: norm, phrase: phrase, showTitle: showTitle,
+    onStale: function (fn) { staleListener = fn; }
   };
 })();

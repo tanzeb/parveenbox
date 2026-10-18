@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f1115">
 <link rel="icon" href="icon.svg">
 <script src="config.js?v=5c1ef1a5"></script>
-<script src="data.js?v=0435782f"></script>
+<script src="data.js?v=f15430cf"></script>
 <title>ParveenBox</title>
 <style>
 /* Written to work on older TV browsers too: no aspect-ratio, no flex gap. CSS grid only inside @supports, flex-wrap otherwise */
@@ -79,6 +79,16 @@ h1{font-size:1.3em;margin:14px 0 4px}.sub{color:var(--mut)}.ctl{margin-top:8px}
   .row .tile,.sk{flex-basis:250px}.grid{grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
   .watch .eps{flex-basis:460px}.ep img{width:150px;height:84px}
 }
+/* search results: the original upload highlighted, other uploads below */
+.grp{border-top:1px solid #232834;padding-top:6px;margin-top:10px}
+.orig{display:flex;align-items:center;background:#1d2230;border:2px solid #3a4560;border-radius:14px;padding:10px;max-width:980px}
+.orig:focus,.orig:hover{box-shadow:0 0 0 3px #fff}
+.orig img{width:320px;height:180px;object-fit:cover;border-radius:10px;margin-right:18px;flex:none;background:#222}
+.orig .ot{font-size:1.15em;font-weight:700;margin:4px 0}
+.tag{display:inline-block;background:#35c47c;color:#08130d;font-weight:800;font-size:.75em;padding:2px 8px;border-radius:6px;letter-spacing:.05em}
+.tag.fav{background:#f5c518;color:#111}
+.oth{color:#8b93a3;font-weight:500;margin:12px 0 4px}
+@media(max-width:700px){.orig{display:block}.orig img{width:100%;height:auto;margin:0 0 8px}}
 </style>
 </head>
 <body>
@@ -90,6 +100,6 @@ h1{font-size:1.3em;margin:14px 0 4px}.sub{color:var(--mut)}.ctl{margin-top:8px}
 <main id="app"></main>
 <div id="toast"></div>
 
-<script src="app.js?v=a72dbb93"></script>
+<script src="app.js?v=20a2f31b"></script>
 </body>
 </html>

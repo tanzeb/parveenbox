@@ -16,30 +16,61 @@
   function fmtViews(n) { n = Number(n) || 0; if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'; if (n >= 1e3) return Math.round(n / 1e3) + 'K'; return String(n); }
   function parseQs(s) { var o = {}; String(s || '').split('&').forEach(function (kv) { if (!kv) return; var i = kv.indexOf('='); o[decodeURIComponent(i < 0 ? kv : kv.slice(0, i))] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1)); }); return o; }
 
+  var SITE_VERSION = '2.5.0';
+  var APP_VERSION = (function () { var m = /[?&]app=([\d.]+)/.exec(location.search); if (m) { ls.set('pb_appver', m[1]); return m[1]; } return ls.get('pb_appver', ''); })();
+  var favs = ls.get('pb_favs', []);
+  function isFav(id) { for (var i = 0; i < favs.length; i++) if (favs[i].id === id) return true; return false; }
+  function toggleFav(p) {
+    if (isFav(p.id)) favs = favs.filter(function (f) { return f.id !== p.id; });
+    else favs.unshift({ id: p.id, title: p.title, channel: p.channel, thumb: p.thumb, count: p.count, official: !!p.official });
+    ls.set('pb_favs', favs.slice(0, 200)); return isFav(p.id);
+  }
+  function favBtnHtml(id) { return '<button class="btn" id="favBtn">' + (isFav(id) ? '&#9733; In favourites' : '&#9734; Add to favourites') + '</button>'; }
+  function bindFav(meta) { var b = $('#favBtn'); if (b) b.onclick = function () { var on = toggleFav(meta); b.innerHTML = on ? '&#9733; In favourites' : '&#9734; Add to favourites'; toast(on ? 'Added to favourites. It is on the front page now.' : 'Removed from favourites.'); }; }
+  /* what the ad-free script last told us, shown on screen so we can tell what is happening on the TV */
+  function adfreeStatus() {
+    if (!onTV) return '';
+    var mode = (function () { try { return localStorage.getItem('pb_tvmode') === 'page-only' ? 'page-only' : 'top'; } catch (e) { return 'top'; } })();
+    var seen = ls.get('pb_adfree_seen', 0), q = ls.get('pb_adfree_q', '');
+    var modeTxt = mode === 'top' ? 'full-screen player' : mode === 'page-only' ? 'built-in player (full screen not allowed)' : 'built-in player';
+    return 'Ad-free script: ' + (seen ? 'working, last seen ' + new Date(seen).toLocaleString() + (q ? ', quality ' + q : '') : 'not seen yet') + ' \u00b7 Playback: ' + modeTxt;
+  }
+
   function tile(p) {
     known[p.id] = p; var w = (prog[p.id] || { w: [] }).w.length, pct = p.count ? Math.min(100, Math.round(w / p.count * 100)) : 0;
     var stats = p.views != null ? fmtViews(p.views) + ' views' + (p.first ? ' · ' + new Date(p.first).getUTCFullYear() : '') + (p.status ? ' · ' + (p.status === 'ongoing' ? 'On-going' : 'Completed') : '') : '';
-    return '<a class="tile" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.title) + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + (p.note ? '<div class="m note2">' + esc(p.note) + '</div>' : '') + '</div></a>';
+    return '<a class="tile" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.full ? p.title : PB.showTitle(p.title)) + (isFav(p.id) ? ' <span style="color:#f5c518">&#9733;</span>' : '') + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + (p.note ? '<div class="m note2">' + esc(p.note) + '</div>' : '') + '</div></a>';
   }
   var skeleton = function (n) { var s = ''; for (var i = 0; i < n; i++) s += '<div class="sk"></div>'; return '<div class="row">' + s + '</div>'; };
-  var SEC_NAMES = { all: 'All Hindi & Urdu', pk: 'Pakistani dramas', hi: 'Hindi TV serials', web: 'Hindi web series' };
+  var SEC_NAMES = { all: 'Pakistani dramas', pk: 'Pakistani dramas' };
   /* after a page renders, put the remote's focus somewhere useful */
   function focusFirst(sel) { if (document.activeElement && document.activeElement !== document.body && document.activeElement.id !== 'q') return; var e = $(sel); if (e) try { e.focus({ preventScroll: true }); } catch (x) {} }
 
   /* ---------- home ---------- */
   function home(my) {
-    var cont = Object.keys(prog).filter(function (id) { return prog[id].last && metas[id]; }).sort(function (a, b) { return (prog[b].at || 0) - (prog[a].at || 0); }).slice(0, 12);
-    var h = cont.length ? '<h2 class="sec">Continue watching</h2><div class="row">' + cont.map(function (id) { return tile(metas[id]); }).join('') + '</div>' : '';
-    var years = ''; for (var y = 2018; y >= 2010; y--) years += '<a class="chip" href="#/browse/all?year=' + y + '&sort=views">' + y + '</a>';
-    h += '<h2 class="sec">Old favourites by year</h2><div class="chips">' + years + '</div>';
-    $('#app').innerHTML = h + '<h2 class="sec">Most watched right now</h2>' + skeleton(8) + skeleton(8);
-    focusFirst('.tile, .chip');
+    var cont = Object.keys(prog).filter(function (id) { var pr = prog[id]; return pr.last && metas[id] && !(metas[id].count && pr.w && pr.w.length >= metas[id].count); })
+      .sort(function (a, b) { return (prog[b].at || 0) - (prog[a].at || 0); }).slice(0, 12);
+    var h = cont.length ? '<h2 class="sec">In progress</h2><div class="row">' + cont.map(function (id) { return tile(metas[id]); }).join('') + '</div>' : '';
+    if (favs.length) h += '<h2 class="sec"><a href="#/favs">&#9733; Your favourites<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + favs.slice(0, 20).map(tile).join('') + '</div>';
+    var years = ''; for (var y = 2018; y >= 2010; y--) years += '<a class="chip" href="#/browse/pk?year=' + y + '&sort=views">' + y + '</a>';
+    var tail = '<h2 class="sec">Old favourites by year</h2><div class="chips">' + years + '</div>'
+      + '<p class="note">Results are saved on this TV for days to protect the daily YouTube limit. <a href="#" id="clearBtn" style="text-decoration:underline">Clear saved results</a></p>'
+      + '<p class="note">ParveenBox ' + (APP_VERSION ? 'app ' + esc(APP_VERSION) + ' \u00b7 ' : '') + 'version ' + SITE_VERSION + (onTV ? '<br>' + esc(adfreeStatus()) : '') + '</p>';
+    var bindClear = function () { var c = $('#clearBtn'); if (c) c.onclick = function (e) { e.preventDefault(); PB.clearCache(); toast('Saved results cleared.'); route(); }; };
+    $('#app').innerHTML = h + '<h2 class="sec">Pakistani dramas: most watched now</h2>' + skeleton(8) + tail;
+    bindClear(); focusFirst('.tile, .chip');
     PB.trending().then(function (secs) {
       if (my !== rid) return;
-      $('#app').innerHTML = h + secs.map(function (s) { return '<h2 class="sec"><a href="#/browse/' + esc(s.key) + '">' + esc(s.title) + '<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + s.items.map(tile).join('') + '</div>'; }).join('')
-        + '<p class="note">Ranked by YouTube view counts on recent full-episode playlists, refreshed every 12 hours. Open a heading to see everything, or search for any title.</p>';
-      focusFirst('.tile, .chip');
-    }, function (e) { if (my !== rid) return; $('#app').innerHTML = h + errBox('Could not load the front page', e.message); });
+      $('#app').innerHTML = h + secs.map(function (s) { return '<h2 class="sec"><a href="#/browse/pk">Pakistani dramas: most watched now<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + s.items.map(tile).join('') + '</div>'; }).join('') + tail;
+      bindClear(); focusFirst('.tile, .chip');
+    }, function (e) { if (my !== rid) return; $('#app').innerHTML = h + errBox('Could not load the front page', e.message) + tail; bindClear(); });
+  }
+
+  /* ---------- favourites ---------- */
+  function favsView() {
+    $('#app').innerHTML = '<h2 class="sec">&#9733; Your favourites</h2>' + (favs.length ? '<div class="grid">' + favs.map(tile).join('') + '</div>'
+      : '<p class="note">Nothing here yet. Open any drama and press &#9734; Add to favourites.</p>');
+    focusFirst('.tile');
   }
 
   /* ---------- browse (a whole section with sorting and filters) ---------- */
@@ -47,7 +78,7 @@
     var year = qs.year || '', sort = qs.sort || 'views', status = qs.status || 'all';
     if (!SEC_NAMES[key]) key = 'all';
     var link = function (k, patch) { var o = extend({ year: year, sort: sort, status: status }, patch), p = [], f; for (f in o) if (o[f] && !(f === 'status' && o[f] === 'all') && !(f === 'sort' && o[f] === 'views')) p.push(f + '=' + encodeURIComponent(o[f])); return '#/browse/' + k + (p.length ? '?' + p.join('&') : ''); };
-    var tabs = ['all', 'pk', 'hi', 'web'].map(function (k) { return '<a class="chip ' + (k === key ? 'on' : '') + '" href="' + link(k, {}) + '">' + esc(SEC_NAMES[k]) + '</a>'; }).join('');
+    var tabs = [].map(function (k) { return '<a class="chip ' + (k === key ? 'on' : '') + '" href="' + link(k, {}) + '">' + esc(SEC_NAMES[k]) + '</a>'; }).join('');
     var sorts = [['views', 'Most viewed'], ['popular', 'Popular (views per day)'], ['newest', 'Newest first'], ['oldest', 'Oldest first']].map(function (s) { return '<option value="' + s[0] + '"' + (s[0] === sort ? ' selected' : '') + '>' + s[1] + '</option>'; }).join('');
     var yopts = '<option value="">Any year</option>'; for (var y = new Date().getFullYear(); y >= 2005; y--) yopts += '<option value="' + y + '"' + (String(y) === year ? ' selected' : '') + '>' + y + '</option>';
     var stat = [['all', 'All'], ['completed', 'Completed'], ['ongoing', 'On-going']].map(function (s) { return '<a class="chip ' + (s[0] === status ? 'on' : '') + '" href="' + link(key, { status: s[0] }) + '">' + s[1] + '</a>'; }).join('');
@@ -67,16 +98,26 @@
 
   /* ---------- search ---------- */
   function searchView(q, my) {
-    $('#app').innerHTML = '<h2 class="sec">Searching for “' + esc(q) + '”…</h2>' + skeleton(6);
+    $('#app').innerHTML = '<h2 class="sec">Searching for \u201c' + esc(q) + '\u201d\u2026</h2>' + skeleton(6);
     PB.search(q).then(function (r) {
       if (my !== rid) return;
-      var h = '';
-      if (r.results.length) h += '<h2 class="sec">' + r.results.length + ' uploads found</h2><p class="note">Exact title matches first, then official channels, then most viewed. Every upload is listed so you can choose; copies and partial uploads are labelled.</p><div class="grid">' + r.results.map(tile).join('') + '</div>';
-      else h += errBox('Not found on YouTube', 'No full-episode playlist matched “' + q + '”. Try another spelling, or the original-language title.');
+      if (!r.groups.length) { $('#app').innerHTML = errBox('No drama found for \u201c' + q + '\u201d', 'Only full-episode dramas are shown (songs, scenes and promos are left out). Check the spelling, or try fewer words.'); return; }
+      var h = '<h2 class="sec">Results for \u201c' + esc(q) + '\u201d</h2><p class="note">Dramas only: songs, OST, scenes and promos are left out. The original upload is highlighted; other uploads of the same drama follow so you can choose.</p>';
+      r.groups.forEach(function (g) {
+        var o = g.items[0], others = g.items.slice(1);
+        known[o.id] = o;
+        h += '<div class="grp"><h2 class="sec">' + esc(g.title) + '</h2>'
+          + '<a class="orig" href="#/p/' + esc(o.id) + '"><img src="' + esc(o.thumb) + '" alt=""><div><span class="tag">ORIGINAL</span>' + (isFav(o.id) ? ' <span class="tag fav">&#9733; Favourite</span>' : '')
+          + '<div class="ot">' + esc(o.title) + '</div><div class="m">' + esc(o.channel) + (o.official ? ' &#10003; official channel' : '') + '</div>'
+          + '<div class="m">' + o.count + ' episodes \u00b7 ' + fmtViews(o.views) + ' views' + (o.first ? ' \u00b7 ' + new Date(o.first).getUTCFullYear() : '') + ' \u00b7 ' + (o.status === 'ongoing' ? 'On-going' : 'Completed') + '</div>'
+          + (o.note ? '<div class="m note2">' + esc(o.note) + '</div>' : '') + '</div></a>'
+          + (others.length ? '<h3 class="oth">Other uploads (' + others.length + ')</h3><div class="row">' + others.map(function (p) { return tile(extend(p, { full: true })); }).join('') + '</div>' : '') + '</div>';
+      });
       $('#app').innerHTML = h;
-      var t = $('.tile'); if (t && document.activeElement !== $('#q')) try { t.focus({ preventScroll: true }); } catch (x) {}
+      var t = $('.orig'); if (t && document.activeElement !== $('#q')) try { t.focus({ preventScroll: true }); } catch (x) {}
     }, function (e) { if (my !== rid) return; $('#app').innerHTML = errBox('Search failed', e.message); });
   }
+
 
   /* ---------- watch ----------
      On the TV, episodes play on YouTube's own TV page (www.youtube.com/tv) inside this app. The ParveenBox TV app
@@ -114,10 +155,10 @@
     var id = P.id, eps = P.eps, resumed = !!prog[id].last;
     var e = eps[P.idx];
     $('#app').innerHTML = P.back + '<div class="hero"><img src="' + esc(e.th) + '" alt=""><div><h1>' + esc(P.meta.title) + '</h1><div class="sub">' + eps.length + ' episodes \u00b7 ' + esc(P.meta.channel || '') + '</div>'
-      + '<div class="ctl"><button class="btn pri" id="playBtn">&#9654; ' + (resumed ? 'Resume ' : 'Play ') + epLabel(e, P.idx) + '</button>' + (P.idx > 0 ? '<button class="btn" id="startBtn">Start from ' + epLabel(eps[0], 0) + '</button>' : '') + '</div>'
-      + '<p class="note">Plays full screen without ads, in the best quality. The next episode starts by itself. Press Back to come back here.</p></div></div>'
+      + '<div class="ctl"><button class="btn pri" id="playBtn">&#9654; ' + (resumed ? 'Resume ' : 'Play ') + epLabel(e, P.idx) + '</button>' + (P.idx > 0 ? '<button class="btn" id="startBtn">Start from ' + epLabel(eps[0], 0) + '</button>' : '') + favBtnHtml(id) + '</div>'
+      + '<p class="note">Plays full screen without ads, in the best quality. The next episode starts by itself. Press Back to come back here.</p><p class="note">' + esc(adfreeStatus()) + '</p></div></div>'
       + '<div class="eps"><h3>Episodes</h3><div id="epList">' + epList(P) + '</div></div>';
-    P.bindBack();
+    P.bindBack(); bindFav(P.meta);
     var go = function (i) { i = Math.min(Math.max(i, 0), eps.length - 1); prog[id].last = eps[i].v; prog[id].at = Date.now(); persist(); playTop(id, eps, i, 0, P.meta.title); };
     $('#playBtn').onclick = function () { go(P.idx); };
     if ($('#startBtn')) $('#startBtn').onclick = function () { go(0); };
@@ -162,7 +203,8 @@
      inside the embedded player, ParveenBox hears from it ("adfree-active") and keeps playing here. If not, ParveenBox
      plays episodes on YouTube's own player page full screen, where the script always runs (mode "top"). If that page
      ever got handed to the YouTube app, ParveenBox notices on return and stays with the embedded player ("page-only"). */
-  function tvMode() { try { return localStorage.getItem('pb_tvmode') || 'page'; } catch (e) { return 'page'; } }
+  /* full screen is the default on the TV: the app's ad-free script always runs on YouTube's own player page */
+  function tvMode() { try { var m = localStorage.getItem('pb_tvmode'); return m === 'page-only' ? 'page-only' : 'top'; } catch (e) { return 'top'; } }
   function setTvMode(m) { try { localStorage.setItem('pb_tvmode', m); } catch (e) {} }
   function playTop(id, eps, i, start, title) {
     var st = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), i: i, w: [], n: title || '' };
@@ -170,11 +212,17 @@
     location.href = 'https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' + (start > 30 ? '&start=' + Math.floor(start) : '') + '#pb=' + encodeURIComponent(JSON.stringify(st));
   }
   var adfreeSeen = false, adfreeQuality = '';
-  window.addEventListener('message', function (e) { if (e && e.data && e.data.pb === 'adfree-active') { adfreeSeen = true; adfreeQuality = e.data.quality || ''; } });
+  window.addEventListener('message', function (e) {
+    if (e && e.data && e.data.pb === 'adfree-active') {
+      adfreeSeen = true; adfreeQuality = e.data.quality || '';
+      ls.set('pb_adfree_seen', Date.now()); if (adfreeQuality) ls.set('pb_adfree_q', adfreeQuality);
+      var st = $('#adStatus'); if (st) st.textContent = adfreeStatus();
+    }
+  });
   (function checkTopReturn() {
     var tryAt = 0; try { tryAt = +localStorage.getItem('pb_top_try') || 0; localStorage.removeItem('pb_top_try'); } catch (e) {}
     if (!tryAt) return;
-    if (/[?&]pbok=1/.test(location.hash)) { try { localStorage.setItem('pb_tvok', '1'); } catch (e) {} }
+    if (/[?&]pbok=1/.test(location.hash)) { try { localStorage.setItem('pb_tvok', '1'); } catch (e) {} ls.set('pb_adfree_seen', Date.now()); var mq = /[?&]q=(\w+)/.exec(location.hash); if (mq) ls.set('pb_adfree_q', mq[1]); }
     else if (Date.now() - tryAt < 6 * 3600e3) { try { if (localStorage.getItem('pb_tvok') !== '1') setTvMode('page-only'); } catch (e) {} }
   })();
 
@@ -182,9 +230,11 @@
     var id = P.id, eps = P.eps, idx = P.idx;
     if (onTV && tvMode() === 'top') { topWatch(P); return; }
     $('#app').innerHTML = P.back + '<div class="watch" id="wrap"><div><div class="player"><div id="yt"></div></div><h1 id="epT"></h1><div class="sub">' + esc(P.meta.title) + ' · ' + eps.length + ' episodes</div>'
-      + '<div class="ctl"><button class="btn" id="prev">&#9198; Prev</button><button class="btn" id="next">Next &#9197;</button><button class="btn" id="fs">&#9974; Full screen</button><button class="btn" id="th">Theater mode</button><button class="btn" id="onyt">Open on YouTube &#8599;</button></div></div>'
+      + '<div class="ctl"><button class="btn" id="prev">&#9198; Prev</button><button class="btn" id="next">Next &#9197;</button><button class="btn" id="fs">&#9974; Full screen</button><button class="btn" id="th">Theater mode</button>' + favBtnHtml(id) + '<button class="btn" id="onyt">Open on YouTube &#8599;</button></div>'
+      + (onTV ? '<p class="note" id="adStatus">' + esc(adfreeStatus()) + '</p>' : '') + '</div>'
       + '<div class="eps"><h3>Episodes</h3><div id="epList"></div></div></div>';
     P.bindBack();
+    bindFav(P.meta);
     if (onTV) { $('#wrap').classList.add('theater'); $('#onyt').style.display = 'none'; $('#th').style.display = 'none'; }
     var draw = function () { P.idx = idx; $('#epList').innerHTML = epList(P); };
     var play = function (i, auto) {
@@ -287,6 +337,7 @@
   }
 
   /* ---------- routing & search box ---------- */
+  PB.onStale(function (e, t) { toast('Showing results saved ' + new Date(t).toLocaleDateString() + '. ' + e.message); });
   function route() {
     var my = ++rid;
     if (player && player.destroy) { try { player.destroy(); } catch (e) {} player = null; }
@@ -296,6 +347,7 @@
       watch(m[1], my);
     }
     else if ((m = h.match(/^#\/browse\/(\w+)(?:\?(.*))?$/))) { $('#q').value = ''; browseView(m[1], parseQs(m[2]), my); }
+    else if (h === '#/favs') favsView();
     else if ((m = h.match(/^#\/s\/(.+)$/))) { var q = decodeURIComponent(m[1]); $('#q').value = q; searchView(q, my); }
     else home(my);
     searchLabel();
