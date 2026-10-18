@@ -107,7 +107,7 @@
       metas[id] = extend(meta, { count: eps.length }); prog[id] = prog[id] || { w: [] }; persist();
       var idx = 0, i; for (i = 0; i < eps.length; i++) if (eps[i].v === prog[id].last) { idx = i; break; }
       var page = { id: id, my: my, meta: meta, eps: eps, idx: idx, back: back, bindBack: bindBack };
-      if (onTV) tvWatch(page); else webWatch(page);
+      webWatch(page);   // the TV plays inside ParveenBox too (the YouTube TV page hands off to the YouTube app)
     }, function (e) { if (my !== rid) return; $('#app').innerHTML = back + errBox('Could not load this series', e.message); bindBack(); });
   }
   function epLabel(e, i) { return e.n != null ? 'Episode ' + e.n : 'Part ' + (i + 1); }
@@ -149,6 +149,7 @@
       + '<div class="ctl"><button class="btn" id="prev">&#9198; Prev</button><button class="btn" id="next">Next &#9197;</button><button class="btn" id="fs">&#9974; Full screen</button><button class="btn" id="th">Theater mode</button><button class="btn" id="onyt">Open on YouTube &#8599;</button></div></div>'
       + '<div class="eps"><h3>Episodes</h3><div id="epList"></div></div></div>';
     P.bindBack();
+    if (onTV) { $('#wrap').classList.add('theater'); $('#onyt').style.display = 'none'; $('#th').style.display = 'none'; }
     var draw = function () { P.idx = idx; $('#epList').innerHTML = epList(P); };
     var play = function (i, auto) {
       idx = Math.min(Math.max(i, 0), eps.length - 1); var e = eps[idx]; prog[id].last = e.v; prog[id].at = Date.now(); persist();
@@ -172,7 +173,7 @@
         },
         onError: function (e) {
           var code = e && e.data;
-          if (code === 101 || code === 150) { toast('The uploader only allows this episode on YouTube itself. Press "Open on YouTube".'); try { $('#onyt').focus(); } catch (x) {} }
+          if (code === 101 || code === 150) { if (onTV) { toast('The uploader does not allow this episode to play inside apps. Press Next for the next episode.'); try { $('#next').focus(); } catch (x) {} } else { toast('The uploader only allows this episode on YouTube itself. Press "Open on YouTube".'); try { $('#onyt').focus(); } catch (x) {} } }
           else toast('This episode cannot be played here (error ' + code + '). Press Next.');
         } } });
     });
