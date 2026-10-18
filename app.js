@@ -16,7 +16,7 @@
   function fmtViews(n) { n = Number(n) || 0; if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'; if (n >= 1e3) return Math.round(n / 1e3) + 'K'; return String(n); }
   function parseQs(s) { var o = {}; String(s || '').split('&').forEach(function (kv) { if (!kv) return; var i = kv.indexOf('='); o[decodeURIComponent(i < 0 ? kv : kv.slice(0, i))] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1)); }); return o; }
 
-  var SITE_VERSION = '2.6.0';
+  var SITE_VERSION = '2.7.0';
   var APP_VERSION = (function () { var m = /[?&]app=([\d.]+)/.exec(location.search); if (m) { ls.set('pb_appver', m[1]); return m[1]; } return ls.get('pb_appver', ''); })();
   var favs = ls.get('pb_favs', []);
   function isFav(id) { for (var i = 0; i < favs.length; i++) if (favs[i].id === id) return true; return false; }
@@ -64,7 +64,7 @@
       PB.monthly().then(function (list) {
         if (my !== rid) return;
         var box = $('#mrow'); if (!box) return;
-        box.innerHTML = list.length ? '<h2 class="sec">Most watched this month</h2><div class="row">' + list.map(tile).join('') + '</div>' : '';
+        box.innerHTML = list.length ? '<h2 class="sec"><a href="#/month">Most watched this month<span class="more">See all ' + list.length + ' &rsaquo;</span></a></h2><div class="row">' + list.slice(0, 10).map(tile).join('') + '</div>' : '';
         focusFirst('.tile, .chip');
       }, function () { var box = $('#mrow'); if (box) box.innerHTML = ''; });
     };
@@ -74,6 +74,17 @@
       $('#app').innerHTML = h + m + secs.map(function (s) { return '<h2 class="sec"><a href="#/browse/pk">Pakistani dramas: most watched now<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + s.items.map(tile).join('') + '</div>'; }).join('') + tail;
       bindClear(); focusFirst('.tile, .chip'); fillMonth();
     }, function (e) { if (my !== rid) return; $('#app').innerHTML = h + errBox('Could not load the front page', e.message) + tail; bindClear(); });
+  }
+
+  /* ---------- most watched this month: the full list of 20 ---------- */
+  function monthView(my) {
+    $('#app').innerHTML = '<h2 class="sec">Most watched this month</h2>' + skeleton(10);
+    PB.monthly().then(function (list) {
+      if (my !== rid) return;
+      $('#app').innerHTML = '<h2 class="sec">Most watched this month</h2><p class="note">Pakistani dramas with the most views on episodes uploaded in the last 30 days.</p>'
+        + (list.length ? '<div class="grid">' + list.slice(0, 20).map(tile).join('') + '</div>' : '<p class="note">Nothing found right now. Try again later.</p>');
+      focusFirst('.tile');
+    }, function (e) { if (my !== rid) return; $('#app').innerHTML = errBox('Could not load this month\'s list', e.message); });
   }
 
   /* ---------- favourites ---------- */
@@ -148,7 +159,7 @@
 
   function watch(id, my) {
     var back = '<button class="back" id="backBtn">&larr; Back</button>';
-    var bindBack = function () { var b = $('#backBtn'); if (b) b.onclick = function () { if (history.length > 1) history.back(); else location.hash = '#/'; }; };
+    var bindBack = function () { var b = $('#backBtn'); if (b) b.onclick = function () { backOneScreen(); }; };
     $('#app').innerHTML = back + skeleton(1); bindBack();
     var meta = known[id] || metas[id];
     Promise.all([meta || PB.playlist(id), PB.episodes(id)]).then(function (res) {
@@ -219,7 +230,7 @@
   function playTop(id, eps, i, start, title) {
     var st = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), lb: eps.map(function (x, j) { return x.n != null ? x.n : j + 1; }), i: i, w: [], n: title || '' };
     try { localStorage.setItem('pb_top_try', String(Date.now())); } catch (e) {}
-    location.href = 'https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' + (start > 30 ? '&start=' + Math.floor(start) : '') + '#pb=' + encodeURIComponent(JSON.stringify(st));
+    location.replace('https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' + (start > 30 ? '&start=' + Math.floor(start) : '') + '#pb=' + encodeURIComponent(JSON.stringify(st)));
   }
   var adfreeSeen = false, adfreeQuality = '';
   window.addEventListener('message', function (e) {
@@ -338,7 +349,7 @@
 
   function goBack() {
     if (document.activeElement === $('#q')) { $('#q').blur(); closeSearch(); try { $('#sbtn').focus(); } catch (e) {} return; }
-    if (location.hash && location.hash !== '#/' && location.hash !== '#') { if (history.length > 1) history.back(); else location.hash = '#/'; return; }
+    if (location.hash && location.hash !== '#/' && location.hash !== '#') { backOneScreen(); return; }
     if (window.PalmSystem && PalmSystem.platformBack) PalmSystem.platformBack();   // on the front page: leave the app
   }
   /* coming back from YouTube's page: remember the episode reached and the ones that played to the end */
@@ -351,8 +362,18 @@
 
   /* ---------- routing & search box ---------- */
   PB.onStale(function (e, t) { toast('Showing results saved ' + new Date(t).toLocaleDateString() + '. ' + e.message); });
+  /* screens visited since ParveenBox opened (coming back from the player starts a fresh list, so Back goes home) */
+  var screens = [];
+  function backOneScreen() {
+    screens.pop();                                   // this screen
+    var prev = screens.pop();                        // the one before (route() adds it again)
+    location.replace(location.href.split('#')[0] + (prev && prev !== '#/' ? prev : '#/'));
+  }
   function route() {
     var my = ++rid;
+    var hNow = (location.hash || '#/').replace(/\?.*$/, function (q) { return /pbok=1/.test(q) ? '' : q; });
+    if (screens[screens.length - 1] !== hNow) screens.push(hNow);
+    if (screens.length > 30) screens.shift();
     if (player && player.destroy) { try { player.destroy(); } catch (e) {} player = null; }
     var h = location.hash, m;
     if ((m = h.match(/^#\/p\/([\w-]+)(?:\?(.*))?$/))) {
@@ -361,6 +382,7 @@
     }
     else if ((m = h.match(/^#\/browse\/(\w+)(?:\?(.*))?$/))) { $('#q').value = ''; browseView(m[1], parseQs(m[2]), my); }
     else if (h === '#/favs') favsView();
+    else if (h === '#/month') monthView(my);
     else if ((m = h.match(/^#\/s\/(.+)$/))) { var q = decodeURIComponent(m[1]); $('#q').value = q; searchView(q, my); }
     else home(my);
     searchLabel();
