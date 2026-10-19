@@ -6,7 +6,7 @@
 /* open the site only once it answers; an image needs no cross-site permission, so this test cannot fail by itself */
 (function check() {
   var img = new Image();
-  img.onload = function () { location.replace('https://tanzeb.github.io/parveenbox/?app=2.9.0'); };
+  img.onload = function () { location.replace('https://tanzeb.github.io/parveenbox/?app=2.9.1'); };
   img.onerror = function () { document.getElementById('m').style.display = 'block'; setTimeout(check, 10000); };
   img.src = 'https://tanzeb.github.io/parveenbox/icon.png?t=' + Date.now();
 })();

@@ -112,7 +112,7 @@
   function epLabel(i) { return 'Episode ' + st.lb[i]; }
   function stateUrl(i) {
     return 'https://www.youtube.com/embed/' + st.eps[i] + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' +
-      '#pb=' + encodeURIComponent(JSON.stringify({ ret: st.ret, pl: st.pl, eps: st.eps, lb: st.lb, i: i, w: st.w, n: st.n }));
+      '#pb=' + encodeURIComponent(JSON.stringify({ ret: st.ret, pl: st.pl, eps: st.eps, lb: st.lb, i: i, w: st.w, n: st.n, f: fails }));
   }
   function backToParveenBox() {
     var p = player(), q = '';
@@ -130,9 +130,14 @@
     else { location.replace(stateUrl(i)); return; }
     say((st.n ? st.n + ' – ' : '') + epLabel(i) + ' of ' + st.eps.length, 3000);
   }
-  function next() {
+  /* failed: the episode could not play. It is not counted as watched, and after 2 failures in a row ParveenBox
+     takes over again instead of running through the whole drama */
+  var fails = st.f || 0;   // carried in the address, so a new page load keeps counting
+  function next(failed) {
     var cur = st.eps[st.i];
-    if (st.w.indexOf(cur) < 0) st.w.push(cur);
+    if (failed) fails++;
+    else if (st.w.indexOf(cur) < 0) st.w.push(cur);
+    if (fails >= 2) { say('These episodes cannot play here. Back to ParveenBox.', 4000); setTimeout(backToParveenBox, 3000); return; }
     if (st.i < st.eps.length - 1) playEpisode(st.i + 1);
     else backToParveenBox();
   }
@@ -234,7 +239,8 @@
     if (p && p.classList.contains('ad-showing')) return;
     var age = Date.now() - started;
     if (v && !done && v.duration > 60 && age > 5000 && (v.ended || (v.paused && v.currentTime >= v.duration - 1))) { done = true; say('Next episode', 2000); setTimeout(next, 1200); }
-    if (!done && age > 6000 && document.querySelector('.ytp-error, .ytp-error-content')) { done = true; say('This episode cannot play here. Playing the next one.', 4000); setTimeout(next, 4000); }
+    if (!done && age > 6000 && document.querySelector('.ytp-error, .ytp-error-content')) { done = true; say('This episode cannot play here. Playing the next one.', 4000); setTimeout(function () { next(true); }, 4000); }
+    if (v && !v.paused && v.currentTime > 5) fails = 0;   // this one plays: the failures were not in a row
     /* autoplay did not kick in: start it straight away instead of waiting */
     if (v && v.paused && !done && v.currentTime < 1 && age > 700 && age < 10000 && !menu && !strip) { try { var r = v.play(); if (r && r.catch) r.catch(function () {}); } catch (x) { /* ignore */ } }
     var vid = p && p.getVideoData && p.getVideoData().video_id;
