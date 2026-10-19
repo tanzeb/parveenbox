@@ -51,3 +51,10 @@ test('the front page keeps out Indian and Turkish channels', () => {
 test('Turkish uploads are kept out too', () => {
   assert.ok(!PB.eligible({ title: 'Mutlu Ol', channel: 'Kanal 7 Pakistan Dizileri', count: 54 }, { minEps: 8 }));
 });
+
+test('a playable copy must be the same drama, not one with a similar name', () => {
+  assert.ok(PB.sameDrama('Uswah', 'Uswah Pakistani Drama | Full Episodes | Omer Shahzad'));
+  assert.ok(PB.sameDrama('Hurmat', 'Hurmat हुरमत'));
+  assert.ok(!PB.sameDrama('Mohabbat', 'Mohabbat Dagh Ki Soorat'));
+  assert.ok(!PB.sameDrama('Hurmat', 'Hurmat Malik'));
+});

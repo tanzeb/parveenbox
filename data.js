@@ -123,7 +123,7 @@
     }
     return false;
   }
-  var NOISE = /\b(ost|osts|songs?|title (song|track)|lyrics?|lyrical|music|audio|naat|naats|qawwali|scenes?|promos?|teasers?|trailers?|clips?|status|reactions?|reviews?|recaps?|explained|bts|behind the scenes|shorts|compilation|funny|memes?|making|highlights?|best moments|interviews?|podcasts?|talk show|morning show|game show|comedy show|news|cooking|recipes?|jeeto pakistan|ramzan|transmission|live stream|bloopers?|mashup|whatsapp|tiktok|fan ?made|then and now|real life|top \d+|ringtones?)\b/i;
+  var NOISE = /\b(ost|osts|sound ?tracks?|songs?|title (song|track)|lyrics?|lyrical|music|audio|naat|naats|qawwali|scenes?|promos?|teasers?|trailers?|clips?|status|reactions?|reviews?|recaps?|explained|bts|behind the scenes|shorts|compilation|funny|memes?|making|highlights?|best moments|interviews?|podcasts?|talk show|morning show|game show|comedy show|news|cooking|recipes?|jeeto pakistan|ramzan|transmission|live stream|bloopers?|mashup|whatsapp|tiktok|fan ?made|then and now|real life|top \d+|ringtones?)\b/i;
   /* browse + front page are Hindi/Urdu only: drop titles that announce another language */
   /* Pakistani dramas only: drop titles that announce something else ("English subtitles" is fine) */
   var OTHER_LANG = /\b(hindi|india|indian|turk|osman|ertugrul|dizi(leri)?|star ?plus|zee ?tv|zee5|colors tv|sony (tv|sab|liv)|sab tv|star bharat|dangal|tamil|telugu|malayalam|kannada|bengali|bangla|marathi|gujarati|korean|k-?drama|chinese|c-?drama|turkish|dubbed|spanish|thai|indonesian|arabic)\b/i;
@@ -235,9 +235,44 @@
   /* ---------- most watched this month ----------
      This month's most-viewed Pakistani drama episodes (one video search + their view counts), added up per drama and
      matched to the drama's playlist on the same channel (that channel's newest 50 playlists, 1 unit each: new dramas
-     with only a few episodes are found too). Saved for a day: about 110 quota units. */
+     with only a few episodes are found too). Official Pakistani channels are often blocked in the viewer's country,
+     so each drama then plays from the best upload that is not (see playable). Saved for a day: about 110 quota units,
+     plus a search (about 130 units, saved two weeks) for each drama whose official playlist is blocked. */
+  /* "Hurmat" = "Hurmat हुरमत", but not "Mohabbat Dagh Ki Soorat" for "Mohabbat": the words must match both ways
+     (Hindi/Urdu script is left out, many uploads add the name in it) */
+  function sameDrama(name, title) {
+    var t = showTitle(title).replace(/[^\x00-\x7f]+/g, ' ');
+    return sim(name, t) >= 0.8 && sim(t, name) >= 0.8;
+  }
+  function playable(name, official) {
+    return (official ? enrich(official) : Promise.resolve(null)).then(function (p) {
+      if (p && p.blocked <= 0.5) return p;
+      return search(name).then(function (r) {
+        var now = Date.now(), cands = [];
+        r.groups.forEach(function (g) {
+          if (!sameDrama(name, g.title)) return;
+          /* on air this month, so a real copy has new episodes; nearly every episode must play here. Items come
+             sorted playable, official, most viewed */
+          cands = cands.concat(g.items.filter(function (x) {
+            return sameDrama(name, x.title) && x.blocked <= 0.1 && x.last && now - x.last < 60 * DAY
+              && (!official || x.count <= official.count * 1.5 + 2);   // far more episodes than the original: another drama, or clips
+          }));
+        });
+        return firstWithEpisodes(cands);
+      }, function (e) { if (e.fatal) throw e; return null; });
+    });
+  }
+  /* a copy of a drama, not a playlist of clips, promos or reviews under its name: at least half the videos are
+     numbered episodes that are not promos, teasers, reviews... */
+  function firstWithEpisodes(list) {
+    if (!list.length) return Promise.resolve(null);
+    return episodes(list[0].id).then(function (eps) {
+      var n = eps.filter(function (e) { return e.n != null && !NOISE.test(e.t); }).length;
+      return eps.length && n >= eps.length / 2 ? list[0] : firstWithEpisodes(list.slice(1));
+    }, function (e) { if (e.fatal) throw e; return firstWithEpisodes(list.slice(1)); });
+  }
   function monthly() {
-    return cached('monthly', 24 * H, function () {
+    return cached('monthly2', 24 * H, function () {
       var after = iso(Date.now() - 30 * DAY);
       return yt('search', { part: 'snippet', type: 'video', q: 'Pakistani drama episode', order: 'viewCount', publishedAfter: after, maxResults: 50, regionCode: 'PK', relevanceLanguage: 'ur' }).then(function (s) {
         var items = (s.items || []).filter(function (it) { return it.id && it.id.videoId && it.snippet; }), chs = [];
@@ -246,7 +281,7 @@
       }).then(function (r) {
         var items = r[0], lists = [];
         r[1].forEach(function (x) { if (x.ok) lists = lists.concat(x.v.filter(function (p) { return eligible(p, { minEps: 1 }); })); });
-        if (!items.length || !lists.length) return [];
+        if (!items.length) return [];
         return yt('videos', { part: 'statistics', id: items.map(function (it) { return it.id.videoId; }).join(','), maxResults: 50 }).then(function (vs) {
           var views = {}; (vs.items || []).forEach(function (v) { views[v.id] = Number(v.statistics && v.statistics.viewCount) || 0; });
           var shows = {}, order = [];
@@ -260,17 +295,20 @@
             if (!shows[k]) { shows[k] = { name: name, channel: ch, views: 0 }; order.push(k); }
             shows[k].views += views[it.id.videoId] || 0;
           });
-          var seen = {}, out = [];
-          order.map(function (k) { return shows[k]; }).sort(function (a, b) { return b.views - a.views; }).forEach(function (sh) {
+          var top = order.map(function (k) { return shows[k]; }).sort(function (a, b) { return b.views - a.views; }).slice(0, 20);
+          return mapLimit(top, 3, function (sh) {
             var best = null, bestScore = 0;
             lists.forEach(function (p) {
-              if (seen[p.id] || p.channel !== sh.channel) return;
+              if (p.channel !== sh.channel) return;
               var sc = Math.min(sim(sh.name, p.title), sim(showTitle(p.title), sh.name));
               if (sc > bestScore) { bestScore = sc; best = p; }
             });
-            if (best && bestScore >= 0.8) { seen[best.id] = 1; out.push(extend(best, { monthViews: sh.views })); }
+            return playable(sh.name, bestScore >= 0.8 ? best : null);
+          }).then(function (picks) {
+            var seen = {}, out = [];
+            picks.forEach(function (p, i) { if (p && !seen[p.id]) { seen[p.id] = 1; out.push(extend(p, { monthViews: top[i].views })); } });
+            return out;
           });
-          return out.slice(0, 20);
         });
       });
     });
@@ -458,7 +496,7 @@
   window.PB = {
     hasKey: !!KEY, sections: SECTIONS, trending: trending, monthly: monthly, browse: browse, search: search,
     episodes: function (id) { return okId(id) ? episodes(id) : Promise.reject(fail('Bad playlist id.')); },
-    playlist: playlist, clearCache: clearCache, sim: sim, phrase: phrase, showTitle: showTitle, order: order, eligible: eligible,   // sim, phrase, order, eligible: for tests/
+    playlist: playlist, clearCache: clearCache, sim: sim, phrase: phrase, showTitle: showTitle, order: order, eligible: eligible, sameDrama: sameDrama,   // sim, phrase, order, eligible, sameDrama: for tests/
     onStale: function (fn) { staleListener = fn; }
   };
 })();

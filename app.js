@@ -16,7 +16,7 @@
   function fmtViews(n) { n = Number(n) || 0; if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'; if (n >= 1e3) return Math.round(n / 1e3) + 'K'; return String(n); }
   function parseQs(s) { var o = {}; String(s || '').split('&').forEach(function (kv) { if (!kv) return; var i = kv.indexOf('='); o[decodeURIComponent(i < 0 ? kv : kv.slice(0, i))] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1)); }); return o; }
 
-  var SITE_VERSION = '2.8.0';
+  var SITE_VERSION = '2.8.1';
   var APP_VERSION = (function () { var m = /[?&]app=([\d.]+)/.exec(location.search); if (m) { ls.set('pb_appver', m[1]); return m[1]; } return ls.get('pb_appver', ''); })();
   var favs = ls.get('pb_favs', []);
   function isFav(id) { for (var i = 0; i < favs.length; i++) if (favs[i].id === id) return true; return false; }
@@ -79,7 +79,7 @@
     $('#app').innerHTML = '<h2 class="sec">Most watched this month</h2>' + skeleton(10);
     PB.monthly().then(function (list) {
       if (my !== rid) return;
-      $('#app').innerHTML = '<h2 class="sec">Most watched this month</h2><p class="note">Pakistani dramas with the most views on episodes uploaded in the last 30 days.</p>'
+      $('#app').innerHTML = '<h2 class="sec">Most watched this month</h2><p class="note">Pakistani dramas with the most views on episodes uploaded in the last 30 days. Each one plays from an upload that works in your country.</p>'
         + (list.length ? '<div class="grid">' + list.slice(0, 20).map(tile).join('') + '</div>' : '<p class="note">Nothing found right now. Try again later.</p>');
       focusFirst('.tile');
     }, function (e) { if (my !== rid) return; $('#app').innerHTML = errBox('Could not load this month\'s list', e.message); });
