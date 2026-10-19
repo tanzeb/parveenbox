@@ -16,7 +16,7 @@
   function fmtViews(n) { n = Number(n) || 0; if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'; if (n >= 1e3) return Math.round(n / 1e3) + 'K'; return String(n); }
   function parseQs(s) { var o = {}; String(s || '').split('&').forEach(function (kv) { if (!kv) return; var i = kv.indexOf('='); o[decodeURIComponent(i < 0 ? kv : kv.slice(0, i))] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1)); }); return o; }
 
-  var SITE_VERSION = '2.8.1';
+  var SITE_VERSION = '2.9.0';
   var APP_VERSION = (function () { var m = /[?&]app=([\d.]+)/.exec(location.search); if (m) { ls.set('pb_appver', m[1]); return m[1]; } return ls.get('pb_appver', ''); })();
   var favs = ls.get('pb_favs', []);
   function isFav(id) { for (var i = 0; i < favs.length; i++) if (favs[i].id === id) return true; return false; }
@@ -34,10 +34,11 @@
     return 'Ad-free script: ' + (seen ? 'working, last seen ' + new Date(seen).toLocaleString() + (q ? ', quality ' + q : '') : 'not seen yet');
   }
 
+  var fresh = {}, NEW_MARK = '<div class="m new">&#9679; New episode</div>';
   function tile(p) {
     known[p.id] = p; var w = (prog[p.id] || { w: [] }).w.length, pct = p.count ? Math.min(100, Math.round(w / p.count * 100)) : 0;
     var stats = p.monthViews ? fmtViews(p.monthViews) + ' views this month' : p.views != null ? fmtViews(p.views) + ' views' + (p.first ? ' · ' + new Date(p.first).getUTCFullYear() : '') + (p.status ? ' · ' + (p.status === 'ongoing' ? 'On-going' : 'Completed') : '') : '';
-    return '<a class="tile" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.full ? p.title : PB.showTitle(p.title)) + (isFav(p.id) ? ' <span style="color:#f5c518">&#9733;</span>' : '') + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + (p.note ? '<div class="m note2">' + esc(p.note) + '</div>' : '') + '</div></a>';
+    return '<a class="tile" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.full ? p.title : PB.showTitle(p.title)) + (isFav(p.id) ? ' <span style="color:#f5c518">&#9733;</span>' : '') + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + (p.note ? '<div class="m note2">' + esc(p.note) + '</div>' : '') + (fresh[p.id] ? NEW_MARK : '') + '</div></a>';
   }
   var skeleton = function (n) { var s = ''; for (var i = 0; i < n; i++) s += '<div class="sk"></div>'; return '<div class="row">' + s + '</div>'; };
   var SEC_NAMES = { all: 'Pakistani dramas', pk: 'Pakistani dramas' };
@@ -48,8 +49,19 @@
   function home(my) {
     var cont = Object.keys(prog).filter(function (id) { var pr = prog[id]; return pr.last && metas[id] && !(metas[id].count && pr.w && pr.w.length >= metas[id].count); })
       .sort(function (a, b) { return (prog[b].at || 0) - (prog[a].at || 0); }).slice(0, 12);
-    var h = cont.length ? '<h2 class="sec">In progress</h2><div class="row">' + cont.map(function (id) { return tile(metas[id]); }).join('') + '</div>' : '';
-    if (favs.length) h += '<h2 class="sec"><a href="#/favs">&#9733; Your favourites<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + favs.slice(0, 20).map(tile).join('') + '</div>';
+    var mine = function () {
+      var s = cont.length ? '<h2 class="sec">In progress</h2><div class="row">' + cont.map(function (id) { return tile(metas[id]); }).join('') + '</div>' : '';
+      return s + (favs.length ? '<h2 class="sec"><a href="#/favs">&#9733; Your favourites<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + favs.slice(0, 20).map(tile).join('') + '</div>' : '');
+    };
+    var h = mine();
+    /* "New episode": the playlist has more videos now than when she last opened it */
+    PB.counts(cont.concat(favs.map(function (f) { return f.id; }))).then(function (c) {
+      for (var id in c) if (prog[id] && prog[id].seen != null && c[id] > prog[id].seen && !fresh[id]) {
+        fresh[id] = 1;
+        [].forEach.call(document.querySelectorAll('a.tile[href="#/p/' + id + '"] .t'), function (t) { t.insertAdjacentHTML('beforeend', NEW_MARK); });
+      }
+      h = mine();
+    }, function () {});
     var years = ''; for (var y = 2018; y >= 2010; y--) years += '<a class="chip" href="#/browse/pk?year=' + y + '&sort=views">' + y + '</a>';
     var tail = '<h2 class="sec">Old favourites by year</h2><div class="chips">' + years + '</div>'
       + '<p class="note">Results are saved on this TV for days to protect the daily YouTube limit. <a href="#" id="clearBtn" style="text-decoration:underline">Clear saved results</a></p>'
@@ -159,11 +171,13 @@
     var bindBack = function () { var b = $('#backBtn'); if (b) b.onclick = function () { backOneScreen(); }; };
     $('#app').innerHTML = back + skeleton(1); bindBack();
     var meta = known[id] || metas[id];
-    Promise.all([meta || PB.playlist(id), PB.episodes(id)]).then(function (res) {
+    Promise.all([meta || PB.playlist(id), PB.episodes(id), PB.counts([id]).then(null, function () { return {}; })]).then(function (res) {
       if (my !== rid) return;
       var eps = res[1]; meta = res[0];
       if (!eps.length) { $('#app').innerHTML = back + errBox('No episodes', 'This playlist is empty or private.'); bindBack(); return; }
-      metas[id] = extend(meta, { count: eps.length }); prog[id] = prog[id] || { w: [] }; persist();
+      metas[id] = extend(meta, { count: eps.length }); prog[id] = prog[id] || { w: [] };
+      if (res[2][id] != null) { prog[id].seen = res[2][id]; delete fresh[id]; }   // the count she has now seen, for the "New episode" mark
+      persist();
       var idx = 0, i; for (i = 0; i < eps.length; i++) if (eps[i].v === prog[id].last) { idx = i; break; }
       var page = { id: id, my: my, meta: meta, eps: eps, idx: idx, back: back, bindBack: bindBack };
       webWatch(page);   // the TV plays inside ParveenBox too (the YouTube TV page hands off to the YouTube app)

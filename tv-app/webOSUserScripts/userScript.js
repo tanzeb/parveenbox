@@ -239,7 +239,23 @@
     if (v && v.paused && !done && v.currentTime < 1 && age > 700 && age < 10000 && !menu && !strip) { try { var r = v.play(); if (r && r.catch) r.catch(function () {}); } catch (x) { /* ignore */ } }
     var vid = p && p.getVideoData && p.getVideoData().video_id;
     if (vid && shownBadgeFor !== vid && age > 2500 && p.getPlaybackQuality && p.getPlaybackQuality() && p.getPlaybackQuality() !== 'unknown') { shownBadgeFor = vid; showBadge(5000); }
+    if (!vid || !v || !(v.duration > 60)) return;
+    /* resume: back to where this episode was left (Back, Home or the TV switched off), saved every 5 s */
+    if (resumedFor !== vid) {
+      resumedFor = vid; var at = positions()[vid];
+      if (at > 30 && at < v.duration - 90) { try { if (p.seekTo) p.seekTo(at, true); else v.currentTime = at; } catch (x) { /* ignore */ } say('Continuing from ' + mmss(at), 4000); }
+    } else if (!v.paused && Date.now() - savedAt > 5000) { savedAt = Date.now(); savePos(vid, v.currentTime < v.duration - 90 ? v.currentTime : null); }
   }, 300);
+  /* positions live in this page's own storage (YouTube's), kept for the last 100 episodes; null = watched to the end */
+  var resumedFor = '', savedAt = 0;
+  function positions() { try { return JSON.parse(localStorage.getItem('pb_pos')) || {}; } catch (e) { return {}; } }
+  function savePos(vid, t) {
+    var all = positions(), keys;
+    delete all[vid]; if (t != null && t > 30) all[vid] = Math.floor(t);
+    keys = Object.keys(all); if (keys.length > 100) delete all[keys[0]];   // oldest first: keys keep the order they were saved in
+    try { localStorage.setItem('pb_pos', JSON.stringify(all)); } catch (e) { /* storage full or blocked */ }
+  }
+  function mmss(s) { s = Math.floor(s); var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (x < 10 ? '0' : '') + x; }
   function hello() { say((st.n ? st.n + ' – ' : '') + epLabel(st.i) + ' of ' + st.eps.length + '.   Down: episodes   Up: quality   Back: ParveenBox', 5000); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hello); else hello();
 })();

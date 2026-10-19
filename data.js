@@ -486,6 +486,14 @@
   }
 
   function okId(id) { return /^[\w-]{10,60}$/.test(id || ''); }
+  /* episode counts of up to 50 playlists for 1 quota unit: { id: count }, for the "New episode" mark */
+  function counts(ids) {
+    ids = ids.filter(okId).slice(0, 50);
+    if (!ids.length) return Promise.resolve({});
+    return cached('cnt:' + ids.join(','), 3 * H, function () {
+      return playlistInfo(ids).then(function (r) { var o = {}; r.forEach(function (p) { o[p.id] = p.count; }); return o; });
+    }, true);
+  }
   function playlist(id) {
     if (!okId(id)) return Promise.reject(fail('Bad playlist id.'));
     return cached('pl:' + id, 7 * DAY, function () {
@@ -496,7 +504,7 @@
   window.PB = {
     hasKey: !!KEY, sections: SECTIONS, trending: trending, monthly: monthly, browse: browse, search: search,
     episodes: function (id) { return okId(id) ? episodes(id) : Promise.reject(fail('Bad playlist id.')); },
-    playlist: playlist, clearCache: clearCache, sim: sim, phrase: phrase, showTitle: showTitle, order: order, eligible: eligible, sameDrama: sameDrama,   // sim, phrase, order, eligible, sameDrama: for tests/
+    playlist: playlist, counts: counts, clearCache: clearCache, sim: sim, phrase: phrase, showTitle: showTitle, order: order, eligible: eligible, sameDrama: sameDrama,   // sim, phrase, order, eligible, sameDrama: for tests/
     onStale: function (fn) { staleListener = fn; }
   };
 })();
