@@ -16,7 +16,7 @@
   function fmtViews(n) { n = Number(n) || 0; if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'; if (n >= 1e3) return Math.round(n / 1e3) + 'K'; return String(n); }
   function parseQs(s) { var o = {}; String(s || '').split('&').forEach(function (kv) { if (!kv) return; var i = kv.indexOf('='); o[decodeURIComponent(i < 0 ? kv : kv.slice(0, i))] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1)); }); return o; }
 
-  var SITE_VERSION = '2.7.0';
+  var SITE_VERSION = '2.8.0';
   var APP_VERSION = (function () { var m = /[?&]app=([\d.]+)/.exec(location.search); if (m) { ls.set('pb_appver', m[1]); return m[1]; } return ls.get('pb_appver', ''); })();
   var favs = ls.get('pb_favs', []);
   function isFav(id) { for (var i = 0; i < favs.length; i++) if (favs[i].id === id) return true; return false; }
@@ -30,10 +30,8 @@
   /* what the ad-free script last told us, shown on screen so we can tell what is happening on the TV */
   function adfreeStatus() {
     if (!onTV) return '';
-    var mode = (function () { try { return localStorage.getItem('pb_tvmode') === 'page-only' ? 'page-only' : 'top'; } catch (e) { return 'top'; } })();
     var seen = ls.get('pb_adfree_seen', 0), q = ls.get('pb_adfree_q', '');
-    var modeTxt = mode === 'top' ? 'full-screen player' : mode === 'page-only' ? 'built-in player (full screen not allowed)' : 'built-in player';
-    return 'Ad-free script: ' + (seen ? 'working, last seen ' + new Date(seen).toLocaleString() + (q ? ', quality ' + q : '') : 'not seen yet') + ' \u00b7 Playback: ' + modeTxt;
+    return 'Ad-free script: ' + (seen ? 'working, last seen ' + new Date(seen).toLocaleString() + (q ? ', quality ' + q : '') : 'not seen yet');
   }
 
   function tile(p) {
@@ -99,11 +97,10 @@
     var year = qs.year || '', sort = qs.sort || 'views', status = qs.status || 'all';
     if (!SEC_NAMES[key]) key = 'all';
     var link = function (k, patch) { var o = extend({ year: year, sort: sort, status: status }, patch), p = [], f; for (f in o) if (o[f] && !(f === 'status' && o[f] === 'all') && !(f === 'sort' && o[f] === 'views')) p.push(f + '=' + encodeURIComponent(o[f])); return '#/browse/' + k + (p.length ? '?' + p.join('&') : ''); };
-    var tabs = [].map(function (k) { return '<a class="chip ' + (k === key ? 'on' : '') + '" href="' + link(k, {}) + '">' + esc(SEC_NAMES[k]) + '</a>'; }).join('');
     var sorts = [['views', 'Most viewed'], ['popular', 'Popular (views per day)'], ['newest', 'Newest first'], ['oldest', 'Oldest first']].map(function (s) { return '<option value="' + s[0] + '"' + (s[0] === sort ? ' selected' : '') + '>' + s[1] + '</option>'; }).join('');
     var yopts = '<option value="">Any year</option>'; for (var y = new Date().getFullYear(); y >= 2005; y--) yopts += '<option value="' + y + '"' + (String(y) === year ? ' selected' : '') + '>' + y + '</option>';
     var stat = [['all', 'All'], ['completed', 'Completed'], ['ongoing', 'On-going']].map(function (s) { return '<a class="chip ' + (s[0] === status ? 'on' : '') + '" href="' + link(key, { status: s[0] }) + '">' + s[1] + '</a>'; }).join('');
-    var head = '<h2 class="sec" style="margin-top:6px">' + esc(SEC_NAMES[key]) + (year ? ' · ' + esc(year) : '') + '</h2><div class="chips">' + tabs + '</div>'
+    var head = '<h2 class="sec" style="margin-top:6px">' + esc(SEC_NAMES[key]) + (year ? ' · ' + esc(year) : '') + '</h2>'
       + '<div class="ctrls"><span class="pair"><label for="sortSel">Sort</label><select id="sortSel">' + sorts + '</select></span><span class="pair"><label for="yearSel">Year</label><select id="yearSel">' + yopts + '</select></span><span class="grp">' + stat + '</span></div>';
     $('#app').innerHTML = head + '<div id="bres">' + skeleton(6) + '<p class="note">Loading the full list. The first time can take 10 to 20 seconds.</p></div>';
     $('#sortSel').onchange = function (e) { location.hash = link(key, { sort: e.target.value }); };
@@ -180,7 +177,7 @@
       + '<p class="note">Plays full screen without ads, in the best quality. The next episode starts by itself. Press Back to come back here.</p><p class="note">' + esc(adfreeStatus()) + '</p></div></div>'
       + '<div class="eps"><h3>Episodes</h3><div id="epList">' + epList(P) + '</div></div>';
     P.bindBack(); bindFav(P.meta);
-    var go = function (i) { i = Math.min(Math.max(i, 0), eps.length - 1); prog[id].last = eps[i].v; prog[id].at = Date.now(); persist(); playTop(id, eps, i, 0, P.meta.title); };
+    var go = function (i) { i = Math.min(Math.max(i, 0), eps.length - 1); prog[id].last = eps[i].v; prog[id].at = Date.now(); persist(); playTop(id, eps, i, P.meta.title); };
     $('#playBtn').onclick = function () { go(P.idx); };
     if ($('#startBtn')) $('#startBtn').onclick = function () { go(0); };
     bindEpList(P, go);
@@ -195,68 +192,20 @@
     $('#epList').onkeydown = function (ev) { if (ev.keyCode === 13) { var d = ev.target.closest('.ep'); if (d) { ev.preventDefault(); play(+d.getAttribute('data-i')); } } };
   }
 
-  function tvWatch(P) {
-    var id = P.id, eps = P.eps, resumed = !!prog[id].last;
-    function render() {
-      var e = eps[P.idx];
-      $('#app').innerHTML = P.back + '<div class="hero"><img src="' + esc(e.th) + '" alt=""><div><h1>' + esc(P.meta.title) + '</h1><div class="sub">' + eps.length + ' episodes · ' + esc(P.meta.channel || '') + '</div>'
-        + '<div class="ctl"><button class="btn pri" id="playBtn">&#9654; ' + (resumed ? 'Resume ' : 'Play ') + epLabel(e, P.idx) + '</button>' + (P.idx > 0 ? '<button class="btn" id="startBtn">Start from ' + epLabel(eps[0], 0) + '</button>' : '') + '</div>'
-        + '<p class="note">Plays without ads in the highest quality. The next episode starts by itself. Press Back on the remote to come back here.</p></div></div>'
-        + '<div class="eps"><h3>Episodes</h3><div id="epList">' + epList(P) + '</div></div>';
-      P.bindBack();
-      $('#playBtn').onclick = function () { play(P.idx); };
-      if ($('#startBtn')) $('#startBtn').onclick = function () { play(0); };
-      bindEpList(P, play);
-    }
-    function play(i) {
-      P.idx = Math.min(Math.max(i, 0), eps.length - 1); var e = eps[P.idx];
-      prog[id].last = e.v; prog[id].at = Date.now(); persist();
-      /* the episode list travels in the address; userScript.js picks it up on YouTube's page */
-      var state = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), i: P.idx, w: [] };
-      location.replace('https://www.youtube.com/tv#/watch?v=' + e.v + '&pb=' + encodeURIComponent(JSON.stringify(state)));
-    }
-    render();
-    try { $('#playBtn').focus(); } catch (x) {}
-  }
-
-  /* ---- TV: ad-free playback ----
-     The ParveenBox TV app's user script removes ads and forces the top quality on YouTube pages. If the TV runs it
-     inside the embedded player, ParveenBox hears from it ("adfree-active") and keeps playing here. If not, ParveenBox
-     plays episodes on YouTube's own player page full screen, where the script always runs (mode "top"). If that page
-     ever got handed to the YouTube app, ParveenBox notices on return and stays with the embedded player ("page-only"). */
-  /* full screen is the default on the TV: the app's ad-free script always runs on YouTube's own player page */
-  function tvMode() { try { var m = localStorage.getItem('pb_tvmode'); return m === 'page-only' ? 'page-only' : 'top'; } catch (e) { return 'top'; } }
-  function setTvMode(m) { try { localStorage.setItem('pb_tvmode', m); } catch (e) {} }
-  function playTop(id, eps, i, start, title) {
+  /* TV: play on YouTube's own player page, full screen, where the app's ad-free script runs */
+  function playTop(id, eps, i, title) {
     var st = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), lb: eps.map(function (x, j) { return x.n != null ? x.n : j + 1; }), i: i, w: [], n: title || '' };
-    try { localStorage.setItem('pb_top_try', String(Date.now())); } catch (e) {}
-    location.replace('https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' + (start > 30 ? '&start=' + Math.floor(start) : '') + '#pb=' + encodeURIComponent(JSON.stringify(st)));
+    location.replace('https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1#pb=' + encodeURIComponent(JSON.stringify(st)));
   }
-  var adfreeSeen = false, adfreeQuality = '';
-  window.addEventListener('message', function (e) {
-    if (e && e.data && e.data.pb === 'adfree-active') {
-      adfreeSeen = true; adfreeQuality = e.data.quality || '';
-      ls.set('pb_adfree_seen', Date.now()); if (adfreeQuality) ls.set('pb_adfree_q', adfreeQuality);
-      var st = $('#adStatus'); if (st) st.textContent = adfreeStatus();
-    }
-  });
-  (function checkTopReturn() {
-    var tryAt = 0; try { tryAt = +localStorage.getItem('pb_top_try') || 0; localStorage.removeItem('pb_top_try'); } catch (e) {}
-    if (!tryAt) return;
-    if (/[?&]pbok=1/.test(location.hash)) { try { localStorage.setItem('pb_tvok', '1'); } catch (e) {} ls.set('pb_adfree_seen', Date.now()); var mq = /[?&]q=(\w+)/.exec(location.hash); if (mq) ls.set('pb_adfree_q', mq[1]); }
-    else if (Date.now() - tryAt < 6 * 3600e3) { try { if (localStorage.getItem('pb_tvok') !== '1') setTvMode('page-only'); } catch (e) {} }
-  })();
-
   function webWatch(P) {
     var id = P.id, eps = P.eps, idx = P.idx;
-    if (onTV && tvMode() === 'top') { topWatch(P); return; }
+    if (onTV) { topWatch(P); return; }
     $('#app').innerHTML = P.back + '<div class="watch" id="wrap"><div><div class="player"><div id="yt"></div></div><h1 id="epT"></h1><div class="sub">' + esc(P.meta.title) + ' · ' + eps.length + ' episodes</div>'
       + '<div class="ctl"><button class="btn" id="prev">&#9198; Prev</button><button class="btn" id="next">Next &#9197;</button><button class="btn" id="fs">&#9974; Full screen</button><button class="btn" id="th">Theater mode</button>' + favBtnHtml(id) + '<button class="btn" id="onyt">Open on YouTube &#8599;</button></div>'
-      + (onTV ? '<p class="note" id="adStatus">' + esc(adfreeStatus()) + '</p>' : '') + '</div>'
+      + '</div>'
       + '<div class="eps"><h3>Episodes</h3><div id="epList"></div></div></div>';
     P.bindBack();
     bindFav(P.meta);
-    if (onTV) { $('#wrap').classList.add('theater'); $('#onyt').style.display = 'none'; $('#th').style.display = 'none'; }
     var draw = function () { P.idx = idx; $('#epList').innerHTML = epList(P); };
     var play = function (i, auto) {
       idx = Math.min(Math.max(i, 0), eps.length - 1); var e = eps[idx]; prog[id].last = e.v; prog[id].at = Date.now(); persist();
@@ -273,25 +222,14 @@
     var cur = $('.ep.cur'); if (cur) cur.scrollIntoView(false);
     loadYT().then(function (ok) {
       if (P.my !== rid) return;
-      if (!ok) { $('.player').innerHTML = '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:#8b93a3">The YouTube player could not load. Check the internet connection.</div>'; return; }
+      if (!ok) { $('.player').innerHTML = '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;color:#b3b3b3">The YouTube player could not load. Check the internet connection.</div>'; return; }
       player = new YT.Player('yt', { videoId: eps[idx].v, playerVars: { rel: 0, playsinline: 1, autoplay: 1 }, events: {
         onStateChange: function (e) {
-          if (onTV && e.data === YT.PlayerState.PLAYING && tvMode() === 'page' && !webWatch._checking) {
-            webWatch._checking = true;
-            setTimeout(function () {
-              webWatch._checking = false;
-              if (P.my !== rid || adfreeSeen || tvMode() !== 'page') return;
-              setTvMode('top');
-              var t = 0; try { t = player.getCurrentTime(); player.pauseVideo(); } catch (x) {}
-              toast('Switching to full-screen ad-free playback…');
-              setTimeout(function () { if (P.my === rid) playTop(id, eps, idx, t, P.meta.title); }, 1500);
-            }, 8000);
-          }
           if (e.data === YT.PlayerState.ENDED) { if (prog[id].w.indexOf(eps[idx].v) < 0) prog[id].w.push(eps[idx].v); persist(); if (idx < eps.length - 1) play(idx + 1, true); else draw(); }
         },
         onError: function (e) {
           var code = e && e.data;
-          if (code === 101 || code === 150) { if (onTV) { toast('The uploader does not allow this episode to play inside apps. Press Next for the next episode.'); try { $('#next').focus(); } catch (x) {} } else { toast('The uploader only allows this episode on YouTube itself. Press "Open on YouTube".'); try { $('#onyt').focus(); } catch (x) {} } }
+          if (code === 101 || code === 150) { toast('The uploader only allows this episode on YouTube itself. Press "Open on YouTube".'); try { $('#onyt').focus(); } catch (x) {} }
           else toast('This episode cannot be played here (error ' + code + '). Press Next.');
         } } });
     });
@@ -358,6 +296,7 @@
     if (/^[\w-]{11}$/.test(qs.last || '')) p.last = qs.last;
     (qs.w || '').split(',').forEach(function (v) { if (/^[\w-]{11}$/.test(v) && p.w.indexOf(v) < 0) p.w.push(v); });
     p.at = Date.now(); persist();
+    if (qs.pbok) { ls.set('pb_adfree_seen', Date.now()); if (qs.q) ls.set('pb_adfree_q', qs.q); }
   }
 
   /* ---------- routing & search box ---------- */

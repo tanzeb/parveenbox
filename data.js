@@ -11,7 +11,7 @@
   'use strict';
   var KEY = (window.PB_CONFIG && window.PB_CONFIG.youtubeKey) || '';
   var REGION = (window.PB_CONFIG && window.PB_CONFIG.region) || 'IN';   // the viewer's country, for blocked videos
-  var H = 36e5, DAY = 864e5, CP = 'pbc3:';   // CP: cache prefix, bump to drop every cached entry
+  var H = 36e5, DAY = 864e5, CP = 'pbc4:';   // CP: cache prefix, bump to drop every cached entry
 
   function fail(msg, fatal) { var e = new Error(msg); e.fatal = !!fatal; return e; }
   function extend(a, b) { var o = {}, k; for (k in a) o[k] = a[k]; for (k in b) o[k] = b[k]; return o; }
@@ -126,7 +126,7 @@
   var NOISE = /\b(ost|osts|songs?|title (song|track)|lyrics?|lyrical|music|audio|naat|naats|qawwali|scenes?|promos?|teasers?|trailers?|clips?|status|reactions?|reviews?|recaps?|explained|bts|behind the scenes|shorts|compilation|funny|memes?|making|highlights?|best moments|interviews?|podcasts?|talk show|morning show|game show|comedy show|news|cooking|recipes?|jeeto pakistan|ramzan|transmission|live stream|bloopers?|mashup|whatsapp|tiktok|fan ?made|then and now|real life|top \d+|ringtones?)\b/i;
   /* browse + front page are Hindi/Urdu only: drop titles that announce another language */
   /* Pakistani dramas only: drop titles that announce something else ("English subtitles" is fine) */
-  var OTHER_LANG = /\b(hindi|indian|star ?plus|zee ?tv|zee5|colors tv|sony (tv|sab|liv)|sab tv|star bharat|dangal|tamil|telugu|malayalam|kannada|bengali|bangla|marathi|gujarati|korean|k-?drama|chinese|c-?drama|turkish|dubbed|spanish|thai|indonesian|arabic)\b/i;
+  var OTHER_LANG = /\b(hindi|india|indian|turk|osman|ertugrul|dizi(leri)?|star ?plus|zee ?tv|zee5|colors tv|sony (tv|sab|liv)|sab tv|star bharat|dangal|tamil|telugu|malayalam|kannada|bengali|bangla|marathi|gujarati|korean|k-?drama|chinese|c-?drama|turkish|dubbed|spanish|thai|indonesian|arabic)\b/i;
 
   /* ---------- YouTube ---------- */
   function yt(ep, params) {
@@ -159,14 +159,14 @@
   }
   function thumb(t) { t = t || {}; return (t.high || t.medium || t.standard || t.default || {}).url || ''; }
   function iso(ms) { return new Date(ms).toISOString(); }
-  function playlistInfo(ids) {
-    if (!ids.length) return Promise.resolve([]);
-    return yt('playlists', { part: 'snippet,contentDetails', id: ids.slice(0, 50).join(','), maxResults: 50 }).then(function (j) {
+  function playlists(params) {
+    return yt('playlists', extend({ part: 'snippet,contentDetails', maxResults: 50 }, params)).then(function (j) {
       return (j.items || []).map(function (p) {
         return { id: p.id, title: dec(p.snippet.title), channel: dec(p.snippet.channelTitle), channelId: p.snippet.channelId, thumb: thumb(p.snippet.thumbnails), count: p.contentDetails.itemCount, created: Date.parse(p.snippet.publishedAt) || null };
       });
     });
   }
+  function playlistInfo(ids) { return ids.length ? playlists({ id: ids.slice(0, 50).join(',') }) : Promise.resolve([]); }
   function playlistSearch(q, o) {
     o = o || {};
     return yt('search', { part: 'snippet', type: 'playlist', q: q, maxResults: o.max || 25, order: o.order || 'relevance', regionCode: o.region, relevanceLanguage: o.lang, publishedAfter: o.after, publishedBefore: o.before })
@@ -200,7 +200,8 @@
     pk: { title: 'Pakistani dramas', minEps: 8, region: 'PK', lang: 'ur', queries: ['Pakistani drama serial full episodes', 'Urdu drama all episodes HD'] }
   };
   var SEC_KEYS = ['pk'];
-  function eligible(p, sec) { return p.count >= sec.minEps && p.count <= 2500 && !NOISE.test(p.title) && !OTHER_LANG.test(p.title); }
+  /* over 400 episodes is an Indian daily soap, not a Pakistani serial */
+  function eligible(p, sec) { return p.count >= sec.minEps && p.count <= 400 && !NOISE.test(p.title) && !OTHER_LANG.test(p.title + ' ' + p.channel); }
 
   /* run every query of a section, keep eligible playlists once each, in query order */
   function sectionPool(sec, opts) {
@@ -233,25 +234,27 @@
 
   /* ---------- most watched this month ----------
      This month's most-viewed Pakistani drama episodes (one video search + their view counts), added up per drama and
-     matched to the drama's full-episode playlist from an official channel. Saved for a day: about 200 quota units. */
+     matched to the drama's playlist on the same channel (that channel's newest 50 playlists, 1 unit each: new dramas
+     with only a few episodes are found too). Saved for a day: about 110 quota units. */
   function monthly() {
     return cached('monthly', 24 * H, function () {
       var after = iso(Date.now() - 30 * DAY);
-      var vids = yt('search', { part: 'snippet', type: 'video', q: 'Pakistani drama episode', order: 'viewCount', publishedAfter: after, maxResults: 50, regionCode: 'PK', relevanceLanguage: 'ur' });
-      var pool = settle([trending(), playlistSearch('Pakistani drama serial episodes', { order: 'date', after: iso(Date.now() - 150 * DAY), max: 50, region: 'PK', lang: 'ur' })]);
-      return Promise.all([vids, pool]).then(function (r) {
-        var items = (r[0].items || []).filter(function (it) { return it.id && it.id.videoId && it.snippet; });
-        var lists = [];
-        if (r[1][0].ok) r[1][0].v.forEach(function (sct) { lists = lists.concat(sct.items); });
-        if (r[1][1].ok) lists = lists.concat(r[1][1].v.filter(function (p) { return eligible(p, SECTIONS.pk); }));
+      return yt('search', { part: 'snippet', type: 'video', q: 'Pakistani drama episode', order: 'viewCount', publishedAfter: after, maxResults: 50, regionCode: 'PK', relevanceLanguage: 'ur' }).then(function (s) {
+        var items = (s.items || []).filter(function (it) { return it.id && it.id.videoId && it.snippet; }), chs = [];
+        items.forEach(function (it) { if (chs.indexOf(it.snippet.channelId) < 0) chs.push(it.snippet.channelId); });
+        return Promise.all([items, settle(chs.slice(0, 10).map(function (id) { return playlists({ channelId: id }); }))]);
+      }).then(function (r) {
+        var items = r[0], lists = [];
+        r[1].forEach(function (x) { if (x.ok) lists = lists.concat(x.v.filter(function (p) { return eligible(p, { minEps: 1 }); })); });
         if (!items.length || !lists.length) return [];
         return yt('videos', { part: 'statistics', id: items.map(function (it) { return it.id.videoId; }).join(','), maxResults: 50 }).then(function (vs) {
           var views = {}; (vs.items || []).forEach(function (v) { views[v.id] = Number(v.statistics && v.statistics.viewCount) || 0; });
           var shows = {}, order = [];
           items.forEach(function (it) {
             var t = dec(it.snippet.title), ch = dec(it.snippet.channelTitle);
-            if (NOISE.test(t) || OTHER_LANG.test(t)) return;
-            var name = showTitle(t).replace(/\b(episode|epi|ep)\b.*$/i, '').replace(/[\s:,-]+$/, '').trim();
+            if (NOISE.test(t) || OTHER_LANG.test(t + ' ' + ch)) return;
+            /* "Tapish Mega Last Episode 35" -> "Tapish" */
+            var name = showTitle(t).replace(/\b(episode|epi|ep)\b.*$/i, '').replace(/(\s+(mega|last|final|first|\d+(st|nd|rd|th)))+\s*$/i, '').replace(/[\s:,-]+$/, '').trim();
             if (name.length < 2) return;
             var k = ch + '|' + norm(name);
             if (!shows[k]) { shows[k] = { name: name, channel: ch, views: 0 }; order.push(k); }
@@ -383,7 +386,7 @@
       var wantNoise = NOISE.test(q), wantOther = OTHER_LANG.test(q);
       return playlistSearch(q + ' drama', { max: 50, region: 'IN', lang: 'ur' }).then(function (found) {
         var cand = found.map(function (p) { return extend(p, { score: sim(q, p.title), phrase: phrase(q, p.title) }); })
-          .filter(function (p) { return p.score >= 0.75 && p.count >= 4 && (wantNoise || !NOISE.test(p.title)) && (wantOther || !OTHER_LANG.test(p.title)); })
+          .filter(function (p) { return p.score >= 0.75 && p.count >= 4 && (wantNoise || !NOISE.test(p.title)) && (wantOther || !OTHER_LANG.test(p.title + ' ' + p.channel)); })
           .sort(function (a, b) { return (b.phrase - a.phrase) || (b.score - a.score) || (b.count - a.count); }).slice(0, 14);
         return mapLimit(cand, 5, enrich).then(function (rich) {
           rich = rich.filter(Boolean);
@@ -431,15 +434,17 @@
           if (j.nextPageToken && items.length < 1000) return page(j.nextPageToken);
         });
       }
-      return page(undefined).then(function () {
-        items.forEach(function (e) { var m = e.t.match(/\b(?:episode|epi|ep|e)\s*[-.#:]?\s*0*(\d{1,4})\b/i); e.n = m ? +m[1] : null; });
-        var withN = items.filter(function (e) { return e.n != null; }), nums = {}, distinct = 0;
-        withN.forEach(function (e) { if (!nums[e.n]) { nums[e.n] = 1; distinct++; } });
-        if (items.length && withN.length >= items.length * 0.7 && distinct >= withN.length * 0.8)
-          items.sort(function (a, b) { return (a.n == null ? 1e9 : a.n) - (b.n == null ? 1e9 : b.n) || a.pos - b.pos; });
-        return items;
-      });
+      return page(undefined).then(function () { return order(items); });
     });
+  }
+  /* sort by the episode number in the titles, when most titles have a distinct one */
+  function order(items) {
+    items.forEach(function (e) { var m = e.t.match(/\b(?:episode|epi|ep|e)\s*[-.#:]?\s*0*(\d{1,4})\b/i); e.n = m ? +m[1] : null; });
+    var withN = items.filter(function (e) { return e.n != null; }), nums = {}, distinct = 0;
+    withN.forEach(function (e) { if (!nums[e.n]) { nums[e.n] = 1; distinct++; } });
+    if (items.length && withN.length >= items.length * 0.7 && distinct >= withN.length * 0.8)
+      items.sort(function (a, b) { return (a.n == null ? 1e9 : a.n) - (b.n == null ? 1e9 : b.n) || a.pos - b.pos; });
+    return items;
   }
 
   function okId(id) { return /^[\w-]{10,60}$/.test(id || ''); }
@@ -453,7 +458,7 @@
   window.PB = {
     hasKey: !!KEY, sections: SECTIONS, trending: trending, monthly: monthly, browse: browse, search: search,
     episodes: function (id) { return okId(id) ? episodes(id) : Promise.reject(fail('Bad playlist id.')); },
-    playlist: playlist, clearCache: clearCache, sim: sim, norm: norm, phrase: phrase, showTitle: showTitle,
+    playlist: playlist, clearCache: clearCache, sim: sim, phrase: phrase, showTitle: showTitle, order: order, eligible: eligible,   // sim, phrase, order, eligible: for tests/
     onStale: function (fn) { staleListener = fn; }
   };
 })();

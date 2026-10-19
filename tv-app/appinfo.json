@@ -1,14 +1,14 @@
 {
   "id": "com.parveenbox.app",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "vendor": "ParveenBox",
   "type": "web",
   "main": "index.html",
   "title": "ParveenBox",
   "icon": "icon.png",
   "largeIcon": "largeIcon.png",
-  "bgColor": "#0f1115",
-  "iconColor": "#0f1115",
+  "bgColor": "#121212",
+  "iconColor": "#121212",
   "resolution": "1920x1080",
   "disableBackHistoryAPI": true,
   "vendorExtension": {
