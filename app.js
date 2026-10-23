@@ -140,7 +140,8 @@
       if (p.last && p.w.indexOf(p.last) >= 0 && idx < eps.length - 1) idx++;
       persist();
       var page = { id: id, my: my, meta: metas[id], eps: eps, idx: idx, back: back, bindBack: bindBack };
-      if (onTV) tvWatch(page); else if (!player) webWatch(page);
+      if (onTV) tvWatch(page);
+      else { if (player && player.destroy) { try { player.destroy(); } catch (x) {} player = null; } webWatch(page); }
       if (added) toast(added + ' new episode' + (added > 1 ? 's' : '') + ' added.');
     }
     var metaP = meta ? Promise.resolve(meta) : PB.playlist(id);
