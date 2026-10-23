@@ -16,7 +16,7 @@
   function fmtViews(n) { n = Number(n) || 0; if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'; if (n >= 1e3) return Math.round(n / 1e3) + 'K'; return String(n); }
   function parseQs(s) { var o = {}; String(s || '').split('&').forEach(function (kv) { if (!kv) return; var i = kv.indexOf('='); o[decodeURIComponent(i < 0 ? kv : kv.slice(0, i))] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1)); }); return o; }
 
-  var SITE_VERSION = '2.9.0';
+  var SITE_VERSION = '2.10.0';
   var APP_VERSION = (function () { var m = /[?&]app=([\d.]+)/.exec(location.search); if (m) { ls.set('pb_appver', m[1]); return m[1]; } return ls.get('pb_appver', ''); })();
   var favs = ls.get('pb_favs', []);
   function isFav(id) { for (var i = 0; i < favs.length; i++) if (favs[i].id === id) return true; return false; }
@@ -34,11 +34,12 @@
     return 'Ad-free script: ' + (seen ? 'working, last seen ' + new Date(seen).toLocaleString() + (q ? ', quality ' + q : '') : 'not seen yet');
   }
 
+  /* fresh[id]: the series has more episodes than when she last opened it. Shown as a green frame and a label on the picture. */
   var fresh = {}, NEW_MARK = '<div class="m new">&#9679; New episode</div>';
   function tile(p) {
     known[p.id] = p; var w = (prog[p.id] || { w: [] }).w.length, pct = p.count ? Math.min(100, Math.round(w / p.count * 100)) : 0;
     var stats = p.monthViews ? fmtViews(p.monthViews) + ' views this month' : p.views != null ? fmtViews(p.views) + ' views' + (p.first ? ' · ' + new Date(p.first).getUTCFullYear() : '') + (p.status ? ' · ' + (p.status === 'ongoing' ? 'On-going' : 'Completed') : '') : '';
-    return '<a class="tile" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.full ? p.title : PB.showTitle(p.title)) + (isFav(p.id) ? ' <span style="color:#f5c518">&#9733;</span>' : '') + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + (p.note ? '<div class="m note2">' + esc(p.note) + '</div>' : '') + (fresh[p.id] ? NEW_MARK : '') + '</div></a>';
+    return '<a class="tile' + (fresh[p.id] ? ' new' : '') + '" href="#/p/' + esc(p.id) + '"><div class="th"><img loading="lazy" src="' + esc(p.thumb) + '" alt="">' + (p.official ? '<span class="badge off">&#10003; Official</span>' : '') + (fresh[p.id] ? '<span class="badge newb">&#9679; New episode</span>' : '') + '<span class="badge">' + p.count + ' eps</span></div>' + (pct ? '<div class="bar"><i style="width:' + pct + '%"></i></div>' : '') + '<div class="t"><div class="n">' + esc(p.full ? p.title : PB.showTitle(p.title)) + (isFav(p.id) ? ' <span style="color:#f5c518">&#9733;</span>' : '') + '</div><div class="m">' + esc(p.channel || '') + '</div>' + (stats ? '<div class="m">' + esc(stats) + '</div>' : '') + (p.note ? '<div class="m note2">' + esc(p.note) + '</div>' : '') + (fresh[p.id] ? NEW_MARK : '') + '</div></a>';
   }
   var skeleton = function (n) { var s = ''; for (var i = 0; i < n; i++) s += '<div class="sk"></div>'; return '<div class="row">' + s + '</div>'; };
   var SEC_NAMES = { all: 'Pakistani dramas', pk: 'Pakistani dramas' };
@@ -49,18 +50,33 @@
   function home(my) {
     var cont = Object.keys(prog).filter(function (id) { var pr = prog[id]; return pr.last && metas[id] && !(metas[id].count && pr.w && pr.w.length >= metas[id].count); })
       .sort(function (a, b) { return (prog[b].at || 0) - (prog[a].at || 0); }).slice(0, 12);
+    var favIds = favs.map(function (f) { return f.id; });
+    var favById = {}; favs.forEach(function (f) { favById[f.id] = f; });
+    /* "New episodes" row first: favourites and dramas in progress with an upload she has not opened yet */
     var mine = function () {
-      var s = cont.length ? '<h2 class="sec">In progress</h2><div class="row">' + cont.map(function (id) { return tile(metas[id]); }).join('') + '</div>' : '';
-      return s + (favs.length ? '<h2 class="sec"><a href="#/favs">&#9733; Your favourites<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + favs.slice(0, 20).map(tile).join('') + '</div>' : '');
+      var newIds = favIds.concat(cont.filter(function (id) { return !favById[id]; })).filter(function (id) { return fresh[id]; });
+      var s = newIds.length ? '<h2 class="sec new">&#9679; New episodes</h2><div class="row">' + newIds.map(function (id) { return tile(metas[id] || favById[id]); }).join('') + '</div>' : '';
+      s += cont.length ? '<h2 class="sec">In progress</h2><div class="row">' + cont.map(function (id) { return tile(metas[id]); }).join('') + '</div>' : '';
+      var fl = favs.slice().sort(function (a, b) { return (fresh[b.id] ? 1 : 0) - (fresh[a.id] ? 1 : 0); });   // new ones first
+      return s + (favs.length ? '<h2 class="sec"><a href="#/favs">&#9733; Your favourites<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + fl.slice(0, 20).map(tile).join('') + '</div>' : '');
     };
-    var h = mine();
-    /* "New episode": the playlist has more videos now than when she last opened it */
-    PB.counts(cont.concat(favs.map(function (f) { return f.id; }))).then(function (c) {
-      for (var id in c) if (prog[id] && prog[id].seen != null && c[id] > prog[id].seen && !fresh[id]) {
-        fresh[id] = 1;
-        [].forEach.call(document.querySelectorAll('a.tile[href="#/p/' + id + '"] .t'), function (t) { t.insertAdjacentHTML('beforeend', NEW_MARK); });
+    var h = function () { return '<div id="mine">' + mine() + '</div>'; };
+    var moved = false; document.addEventListener('keydown', function once() { moved = true; document.removeEventListener('keydown', once); });
+    /* check favourites and dramas in progress for new uploads (1 quota unit for up to 50) */
+    PB.counts(cont.concat(favIds.filter(function (id) { return cont.indexOf(id) < 0; }))).then(function (c) {
+      var changed = false;
+      for (var id in c) {
+        var pr = prog[id] = prog[id] || { w: [] };
+        if (pr.seen == null) { pr.seen = c[id]; changed = true; }          // never checked before: count from today
+        else if (c[id] > pr.seen && !fresh[id]) { fresh[id] = 1; changed = true; }
       }
-      h = mine();
+      persist();
+      var box = $('#mine'); if (!changed || my !== rid || !box) return;
+      var f = document.activeElement, href = f && box.contains(f) ? f.getAttribute('href') : null;
+      box.innerHTML = mine();
+      var again = href && box.querySelector('a[href="' + href + '"]');
+      if (again) try { again.focus({ preventScroll: true }); } catch (x) {}
+      else if (!moved) { var n = $('.tile.new'); if (n) try { n.focus({ preventScroll: true }); window.scrollTo(0, 0); } catch (x) {} }
     }, function () {});
     var years = ''; for (var y = 2018; y >= 2010; y--) years += '<a class="chip" href="#/browse/pk?year=' + y + '&sort=views">' + y + '</a>';
     var tail = '<h2 class="sec">Old favourites by year</h2><div class="chips">' + years + '</div>'
@@ -68,8 +84,8 @@
       + '<p class="note">ParveenBox ' + (APP_VERSION ? 'app ' + esc(APP_VERSION) + ' \u00b7 ' : '') + 'version ' + SITE_VERSION + (onTV ? '<br>' + esc(adfreeStatus()) : '') + '</p>';
     var bindClear = function () { var c = $('#clearBtn'); if (c) c.onclick = function (e) { e.preventDefault(); PB.clearCache(); toast('Saved results cleared.'); route(); }; };
     var month = '<div id="mrow"><h2 class="sec">Most watched this month</h2>' + skeleton(8) + '</div>';
-    $('#app').innerHTML = h + month + '<h2 class="sec">Pakistani dramas: most watched now</h2>' + skeleton(8) + tail;
-    bindClear(); focusFirst('.tile, .chip');
+    $('#app').innerHTML = h() + month + '<h2 class="sec">Pakistani dramas: most watched now</h2>' + skeleton(8) + tail;
+    bindClear(); focusFirst('.tile.new, .tile, .chip');
     var fillMonth = function () {
       PB.monthly().then(function (list) {
         if (my !== rid) return;
@@ -81,9 +97,9 @@
     PB.trending().then(function (secs) {
       if (my !== rid) return;
       var m = $('#mrow') ? $('#mrow').outerHTML : '';
-      $('#app').innerHTML = h + m + secs.map(function (s) { return '<h2 class="sec"><a href="#/browse/pk">Pakistani dramas: most watched now<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + s.items.map(tile).join('') + '</div>'; }).join('') + tail;
-      bindClear(); focusFirst('.tile, .chip'); fillMonth();
-    }, function (e) { if (my !== rid) return; $('#app').innerHTML = h + errBox('Could not load the front page', e.message) + tail; bindClear(); });
+      $('#app').innerHTML = h() + m + secs.map(function (s) { return '<h2 class="sec"><a href="#/browse/pk">Pakistani dramas: most watched now<span class="more">See all &rsaquo;</span></a></h2><div class="row">' + s.items.map(tile).join('') + '</div>'; }).join('') + tail;
+      bindClear(); focusFirst('.tile.new, .tile, .chip'); fillMonth();
+    }, function (e) { if (my !== rid) return; $('#app').innerHTML = h() + errBox('Could not load the front page', e.message) + tail; bindClear(); });
   }
 
   /* ---------- most watched this month: the full list of 20 ---------- */
@@ -99,7 +115,8 @@
 
   /* ---------- favourites ---------- */
   function favsView() {
-    $('#app').innerHTML = '<h2 class="sec">&#9733; Your favourites</h2>' + (favs.length ? '<div class="grid">' + favs.map(tile).join('') + '</div>'
+    var fl = favs.slice().sort(function (a, b) { return (fresh[b.id] ? 1 : 0) - (fresh[a.id] ? 1 : 0); });   // new episodes first
+    $('#app').innerHTML = '<h2 class="sec">&#9733; Your favourites</h2>' + (favs.length ? '<div class="grid">' + fl.map(tile).join('') + '</div>'
       : '<p class="note">Nothing here yet. Open any drama and press &#9734; Add to favourites.</p>');
     focusFirst('.tile');
   }
@@ -170,21 +187,31 @@
     var back = '<button class="back" id="backBtn">&larr; Back</button>';
     var bindBack = function () { var b = $('#backBtn'); if (b) b.onclick = function () { backOneScreen(); }; };
     $('#app').innerHTML = back + skeleton(1); bindBack();
-    var meta = known[id] || metas[id];
-    Promise.all([meta || PB.playlist(id), PB.episodes(id), PB.counts([id]).then(null, function () { return {}; })]).then(function (res) {
+    var meta = known[id] || metas[id], shown = null;
+    var key = function (eps) { return eps.map(function (e) { return e.v; }).join(','); };
+    function show(eps) {
       if (my !== rid) return;
-      var eps = res[1]; meta = res[0];
       if (!eps.length) { $('#app').innerHTML = back + errBox('No episodes', 'This playlist is empty or private.'); bindBack(); return; }
-      metas[id] = extend(meta, { count: eps.length }); prog[id] = prog[id] || { w: [] };
-      if (res[2][id] != null) { prog[id].seen = res[2][id]; delete fresh[id]; }   // the count she has now seen, for the "New episode" mark
-      persist();
-      var idx = 0, i; for (i = 0; i < eps.length; i++) if (eps[i].v === prog[id].last) { idx = i; break; }
-      var page = { id: id, my: my, meta: meta, eps: eps, idx: idx, back: back, bindBack: bindBack };
-      webWatch(page);   // the TV plays inside ParveenBox too (the YouTube TV page hands off to the YouTube app)
-    }, function (e) { if (my !== rid) return; $('#app').innerHTML = back + errBox('Could not load this series', e.message); bindBack(); });
+      var added = shown && eps.length > shown.length ? eps.length - shown.length : 0;
+      shown = eps;
+      metas[id] = extend(meta, { count: eps.length }); prog[id] = prog[id] || { w: [] }; persist();
+      /* start where she left off; if that episode was watched to the end, move on to the next one */
+      var p = prog[id], idx = 0, i; for (i = 0; i < eps.length; i++) if (eps[i].v === p.last) { idx = i; break; }
+      if (p.last && p.w.indexOf(p.last) >= 0 && idx < eps.length - 1) idx++;
+      if (player && player.destroy) { try { player.destroy(); } catch (x) {} player = null; }
+      webWatch({ id: id, my: my, meta: meta, eps: eps, idx: idx, back: back, bindBack: bindBack });
+      if (added) toast(added + ' new episode' + (added > 1 ? 's' : '') + ' added.');
+    }
+    /* 1. the saved list straight away, 2. a fresh one from YouTube (the saved one can be hours old), 3. remember the count she has now seen */
+    Promise.all([meta || PB.playlist(id), PB.episodes(id)]).then(function (res) {
+      meta = res[0]; show(res[1]);
+      return PB.episodes(id, true).then(function (eps) { if (my === rid && key(eps) !== key(shown)) show(eps); }, function () {});
+    }).then(function () {
+      return PB.counts([id]).then(function (c) { if (c[id] != null) { prog[id].seen = c[id]; delete fresh[id]; persist(); } }, function () {});
+    }).then(null, function (e) { if (my !== rid || shown) return; $('#app').innerHTML = back + errBox('Could not load this series', e.message); bindBack(); });
   }
   function topWatch(P) {
-    var id = P.id, eps = P.eps, resumed = !!prog[id].last;
+    var id = P.id, eps = P.eps, resumed = prog[id].last === eps[P.idx].v;   // otherwise it is the next, unwatched episode
     var e = eps[P.idx];
     $('#app').innerHTML = P.back + '<div class="hero"><img src="' + esc(e.th) + '" alt=""><div><h1>' + esc(P.meta.title) + '</h1><div class="sub">' + eps.length + ' episodes \u00b7 ' + esc(P.meta.channel || '') + '</div>'
       + '<div class="ctl"><button class="btn pri" id="playBtn">&#9654; ' + (resumed ? 'Resume ' : 'Play ') + epLabel(e, P.idx) + '</button>' + (P.idx > 0 ? '<button class="btn" id="startBtn">Start from ' + epLabel(eps[0], 0) + '</button>' : '') + favBtnHtml(id) + '</div>'

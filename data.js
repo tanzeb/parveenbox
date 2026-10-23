@@ -459,7 +459,8 @@
   }
 
   /* ---------- episodes ---------- */
-  function episodes(id) {
+  /* force: ask YouTube now instead of using the saved list (a new episode may be minutes old) */
+  function episodes(id, force) {
     return cached('ep:' + id, 6 * H, function () {
       var items = [];
       function page(tok) {
@@ -473,7 +474,7 @@
         });
       }
       return page(undefined).then(function () { return order(items); });
-    });
+    }, false, force);
   }
   /* sort by the episode number in the titles, when most titles have a distinct one */
   function order(items) {
@@ -503,7 +504,7 @@
 
   window.PB = {
     hasKey: !!KEY, sections: SECTIONS, trending: trending, monthly: monthly, browse: browse, search: search,
-    episodes: function (id) { return okId(id) ? episodes(id) : Promise.reject(fail('Bad playlist id.')); },
+    episodes: function (id, fresh) { return okId(id) ? episodes(id, !!fresh) : Promise.reject(fail('Bad playlist id.')); },
     playlist: playlist, counts: counts, clearCache: clearCache, sim: sim, phrase: phrase, showTitle: showTitle, order: order, eligible: eligible, sameDrama: sameDrama,   // sim, phrase, order, eligible, sameDrama: for tests/
     onStale: function (fn) { staleListener = fn; }
   };
