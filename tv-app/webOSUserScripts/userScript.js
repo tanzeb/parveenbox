@@ -4,7 +4,7 @@
  * On YouTube pages (the embedded player, or YouTube's player page shown full screen):
  *   1. removes the ad entries from YouTube's player data before the video starts
  *      (the same idea as webosbrew / NicholasBly youtube-webos), and skips any ad that still appears
- *   2. asks for the highest quality the video has
+ *   2. asks for the highest quality the video has, and keeps YouTube's subtitles off unless chosen in the Up menu
  *   3. tells ParveenBox's page that it is running (so ParveenBox knows the ad blocking works there)
  * On YouTube's player page opened full screen by ParveenBox (address ends in #pb=...):
  *   4. plays the next episode when one ends, and Back returns to ParveenBox
@@ -79,6 +79,21 @@
     return want;
   }
 
+  /* ---------- subtitles: off unless switched on in the Up menu (remembered in pb_cc) ----------
+     The remote's keys are taken over on the player page, so YouTube's own CC button cannot be reached.
+     Subtitles burned into the picture itself (some "Eng Sub" uploads) cannot be removed by any player. */
+  function ccWanted() { try { return localStorage.getItem('pb_cc') === 'on'; } catch (e) { return false; } }
+  function applyCaptions(p) {
+    if (!p) return;
+    if (ccWanted()) {
+      try { if (p.loadModule) p.loadModule('captions'); } catch (e) { /* ignore */ }
+      try { var list = p.getOption('captions', 'tracklist') || []; if (list.length) p.setOption('captions', 'track', list[0]); } catch (e) { /* ignore */ }
+      return;
+    }
+    try { if (p.setOption) p.setOption('captions', 'track', {}); } catch (e) { /* ignore */ }
+    try { if (p.unloadModule) { p.unloadModule('captions'); p.unloadModule('cc'); } } catch (e) { /* ignore */ }
+  }
+
   /* ---------- watch loop: skip ads that slip through, keep the quality, report to ParveenBox ---------- */
   var mutedByUs = false, qualityTimer = {};
   function player() { return document.querySelector('#movie_player') || document.querySelector('.html5-video-player'); }
@@ -96,7 +111,10 @@
     var vid = (p.getVideoData && p.getVideoData() && p.getVideoData().video_id) || '';
     if (vid && !qualityTimer[vid] && p.getAvailableQualityLevels && (p.getAvailableQualityLevels() || []).length) {
       qualityTimer[vid] = Date.now(); try { forceQuality(p); } catch (e) { /* ignore */ }
-      setTimeout(function () { try { forceQuality(player()); } catch (e) { /* ignore */ } }, 4000);
+      applyCaptions(p);
+      /* checked again a little later: YouTube can switch subtitles on once the video has started */
+      setTimeout(function () { try { forceQuality(player()); } catch (e) { /* ignore */ } applyCaptions(player()); }, 4000);
+      setTimeout(function () { applyCaptions(player()); }, 10000);
     }
     if (window.parent !== window) { try { window.parent.postMessage({ pb: 'adfree-active', quality: (p.getPlaybackQuality && p.getPlaybackQuality()) || '' }, '*'); } catch (e) { /* ignore */ } }
   }, 300);
@@ -111,7 +129,7 @@
 
   function epLabel(i) { return 'Episode ' + st.lb[i]; }
   function stateUrl(i) {
-    return 'https://www.youtube.com/embed/' + st.eps[i] + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1' +
+    return 'https://www.youtube.com/embed/' + st.eps[i] + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1&cc_load_policy=0' +
       '#pb=' + encodeURIComponent(JSON.stringify({ ret: st.ret, pl: st.pl, eps: st.eps, lb: st.lb, i: i, w: st.w, n: st.n, f: fails }));
   }
   function backToParveenBox() {
@@ -166,24 +184,30 @@
     badge.textContent = 'Quality: ' + qName(q); badge.style.opacity = '1';
     clearTimeout(badge._t); badge._t = setTimeout(function () { badge.style.opacity = '0'; }, ms || 5000);
   }
-  /* Up: choose the quality (remembered for every episode) */
+  /* Up: subtitles on/off and the quality (both remembered for every episode) */
   function openMenu() {
     var p = player(); if (!p || !p.getAvailableQualityLevels) { say('Quality list not ready yet. Try again in a moment.'); return; }
     var levels = (p.getAvailableQualityLevels() || []).filter(function (q) { return q !== 'auto'; });
     if (!levels.length) { say('Quality list not ready yet. Try again in a moment.'); return; }
     var cur = p.getPlaybackQuality && p.getPlaybackQuality();
-    var items = [{ q: 'max', t: 'Always the best (' + qName(levels[0]) + ')' }].concat(levels.map(function (q) { return { q: q, t: qName(q) }; }));
+    var ccItem = { cc: true, t: 'Subtitles: ' + (ccWanted() ? 'On' : 'Off') + '   (OK to switch ' + (ccWanted() ? 'off' : 'on') + ')' };
+    var items = [ccItem, { q: 'max', t: 'Always the best (' + qName(levels[0]) + ')' }].concat(levels.map(function (q) { return { q: q, t: qName(q) }; }));
     var pick = 'max'; try { pick = localStorage.getItem('pb_quality') || 'max'; } catch (e) { /* ignore */ }
-    var sel = 0; for (var i = 0; i < items.length; i++) if (items[i].q === pick) sel = i;
+    var sel = 0;   // starts on Subtitles: Up then OK switches them; Down reaches the qualities
     menu = el(FONT + 'position:fixed;right:3%;top:12%;z-index:2147483647;background:rgba(18,18,18,.95);color:#fff;font-size:26px;padding:16px 0;border-radius:14px;min-width:380px');
     function draw() {
-      fill(menu, [mk('padding:4px 26px 12px;color:#b3b3b3;font-size:22px', 'Quality (now ' + qName(cur) + ')')].concat(items.map(function (it, j) {
-        return mk('padding:10px 26px;' + (j === sel ? 'background:#1ed760;color:#000;font-weight:700' : ''), it.t + (it.q === pick ? '  ✓' : ''));
+      fill(menu, [mk('padding:4px 26px 12px;color:#b3b3b3;font-size:22px', 'Subtitles and quality (now ' + qName(cur) + ')')].concat(items.map(function (it, j) {
+        return mk('padding:10px 26px;' + (j === sel ? 'background:#1ed760;color:#000;font-weight:700' : '') + (it.cc ? 'border-bottom:1px solid #4d4d4d;margin-bottom:6px' : ''), it.t + (!it.cc && it.q === pick ? '  ✓' : ''));
       })).concat([mk('padding:12px 26px 0;color:#b3b3b3;font-size:22px', 'Up/Down to choose, OK to set, Back to close')]));
     }
     draw();
     menu._move = function (d) { sel = (sel + d + items.length) % items.length; draw(); };
     menu._ok = function () {
+      if (items[sel].cc) {
+        var on = !ccWanted();
+        try { localStorage.setItem('pb_cc', on ? 'on' : 'off'); } catch (e) { /* ignore */ }
+        closeMenu(); applyCaptions(player()); say(on ? 'Subtitles on' : 'Subtitles off', 2500); return;
+      }
       try { localStorage.setItem('pb_quality', items[sel].q); } catch (e) { /* ignore */ }
       closeMenu(); var pl = player(); if (pl) { var vid = pl.getVideoData && pl.getVideoData().video_id; qualityTries[vid] = 0; forceQuality(pl, true); }
       say('Quality: ' + items[sel].t, 2500); setTimeout(function () { showBadge(4000); }, 3000);
@@ -262,6 +286,6 @@
     try { localStorage.setItem('pb_pos', JSON.stringify(all)); } catch (e) { /* storage full or blocked */ }
   }
   function mmss(s) { s = Math.floor(s); var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (x < 10 ? '0' : '') + x; }
-  function hello() { say((st.n ? st.n + ' – ' : '') + epLabel(st.i) + ' of ' + st.eps.length + '.   Down: episodes   Up: quality   Back: ParveenBox', 5000); }
+  function hello() { say((st.n ? st.n + ' – ' : '') + epLabel(st.i) + ' of ' + st.eps.length + '.   Down: episodes   Up: subtitles, quality   Back: ParveenBox', 5000); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hello); else hello();
 })();

@@ -16,7 +16,7 @@
   function fmtViews(n) { n = Number(n) || 0; if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B'; if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M'; if (n >= 1e3) return Math.round(n / 1e3) + 'K'; return String(n); }
   function parseQs(s) { var o = {}; String(s || '').split('&').forEach(function (kv) { if (!kv) return; var i = kv.indexOf('='); o[decodeURIComponent(i < 0 ? kv : kv.slice(0, i))] = i < 0 ? '' : decodeURIComponent(kv.slice(i + 1)); }); return o; }
 
-  var SITE_VERSION = '2.10.0';
+  var SITE_VERSION = '2.10.1';
   var APP_VERSION = (function () { var m = /[?&]app=([\d.]+)/.exec(location.search); if (m) { ls.set('pb_appver', m[1]); return m[1]; } return ls.get('pb_appver', ''); })();
   var favs = ls.get('pb_favs', []);
   function isFav(id) { for (var i = 0; i < favs.length; i++) if (favs[i].id === id) return true; return false; }
@@ -236,7 +236,7 @@
   /* TV: play on YouTube's own player page, full screen, where the app's ad-free script runs */
   function playTop(id, eps, i, title) {
     var st = { ret: location.href.split('#')[0], pl: id, eps: eps.map(function (x) { return x.v; }), lb: eps.map(function (x, j) { return x.n != null ? x.n : j + 1; }), i: i, w: [], n: title || '' };
-    location.replace('https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1#pb=' + encodeURIComponent(JSON.stringify(st)));
+    location.replace('https://www.youtube.com/embed/' + eps[i].v + '?autoplay=1&rel=0&playsinline=1&iv_load_policy=3&modestbranding=1&cc_load_policy=0#pb=' + encodeURIComponent(JSON.stringify(st)));
   }
   function webWatch(P) {
     var id = P.id, eps = P.eps, idx = P.idx;
